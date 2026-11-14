@@ -15,6 +15,7 @@ jobs:
   build:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: windows-latest
@@ -41,6 +42,7 @@ jobs:
 
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
+        timeout-minutes: 45
 
       - name: Prepare artifact directory
         run: |
@@ -74,8 +76,11 @@ jobs:
           name: builds-windows-latest-x86_64-pc-windows-msvc
           path: builds
 
-      - name: Install NSIS
-        run: choco install --no-progress nsis --version 3.08.2
+      - name: Install NSIS and WiX
+        run: |
+          choco install --no-progress nsis --version 3.10
+          choco install --no-progress wixtoolset --version 4.0.1
+          RefreshEnv
         shell: bash
 
       - name: Package portable .exe
@@ -87,7 +92,7 @@ jobs:
       - name: Package .setup.exe (NSIS)
         run: |
           mkdir -p nsis
-          cat > nsis/inst.nsi <<'EOF'
+          @"
           !include "MUI2.nsh"
           !define APPNAME "LemonWatch"
           !define EXENAME "lemon-watch.exe"
@@ -102,7 +107,7 @@ jobs:
           RequestExecutionLevel admin
 
           !insertmacro MUI_PAGE_WELCOME
-          !insertmacro MUI_PAGE_LICENSE "LICENSE"
+          !insertmacro MUI_PAGE_LICENSE "..\LICENSE"
           !insertmacro MUI_PAGE_DIRECTORY
           !insertmacro MUI_PAGE_INSTFILES
           !insertmacro MUI_UNPAGE_CONFIRM
@@ -136,17 +141,15 @@ jobs:
             Delete "$INSTDIR\uninstall.exe"
             RMDir "$INSTDIR"
           SectionEnd
-          EOF
+          "@
           cd nsis
           makensis inst.nsi
         shell: bash
 
-      - name: Package .msi (WiX candle + light)
+      - name: Package .msi (WiX)
         run: |
-          choco install --no-progress wixtoolset --version 4.0.1
-          RefreshEnv
           mkdir -p wix
-          cat > wix/product.wxs <<'EOF'
+          @"
           <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
             <Package
               Name="LemonWatch"
@@ -164,7 +167,6 @@ jobs:
             </Package>
             <Feature Id="Main" Title="LemonWatch" Level="1">
               <ComponentRef Id="Exe" />
-              <ComponentRef Id="Uninstall" />
             </Feature>
             <Directory Id="ProgramFiles64Folder">
               <Directory Id="INSTALLFOLDER" Name="LemonWatch">
@@ -199,50 +201,18 @@ jobs:
                                Value="1.0.0"
                                Type="string" />
               </Component>
-                <Component Id="Uninstall" Guid="*" Win64="yes">
-                  <File Id="UninstallExe"
-                        Source="wix\uninstall.exe"
-                        KeyPath="yes" />
-                </Component>
               </Directory>
             </Directory>
           </Wix>
-          EOF
-          cat > wix/uninstall.wxs <<'EOF'
-          <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
-            <Package Name="LemonWatchUninstaller" UpgradeCode="00000000-0000-0000-0000-000000000000" Scope="perMachine" Compressed="yes" />
-            <Feature Id="Main" Title="Uninstall" Level="1">
-              <ComponentRef Id="UninstallExe" />
-            </Feature>
-            <MediaTemplate EmbedMedia="yes" />
-            <Directory Id="CommonFilesFolder">
-              <Directory Id="UninstallFolder" Name="LemonWatch">
-                <Component Id="UninstallExe" Guid="*" Win64="yes">
-                  <File Id="UninstallExeFile"
-                        Source="wix\uninstall.exe"
-                        KeyPath="yes" />
-                </Component>
-              </Directory>
-            </Directory>
-          </Wix>
-          EOF
-          cat > wix/uninstall.cpp <<'EOF'
-          #include <windows.h>
-          int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR args, int show) {
-            return (int)ShellExecute(NULL, "runas", "msiexec.exe", "/x {REPLACEUPGRADEKEY}", NULL, SW_SHOW);
-          }
-          EOF
-          cl /nologo /O2 /MD /Fe:wix\uninstall.exe wix\uninstall.cpp 2>$null || echo "cl not available; skipping exe-based uninstaller"
+          "@
           candle wix\product.wxs -out wix\product.wixobj
-          candle wix\uninstall.wxs -out wix\uninstall.wixobj
-          light wix\product.wixobj wix\uninstall.wixobj -out release/${{ env.APP_NAME }}-1.0.0-win-x64.msi
+          light wix\product.wixobj -out release/${{ env.APP_NAME }}-1.0.0-win-x64.msi
         shell: bash
-        continue-on-error: true
 
-      - name: Package checksums
+      - name: Compute SHA256SUMS
         run: |
           cd release
-          powershell -Command "Get-FileHash *.exe, *.msi -Algorithm SHA256 | ForEach-Object { '$($_.Hash)  $($_.Path.Replace($PWD.Path + '\\', ''))' } | Out-File -Encoding ascii SHA256SUMS"
+          powershell -NoProfile -Command "Get-FileHash *.exe, *.msi -Algorithm SHA256 | ForEach-Object { '$($_.Hash)  $($_.Path.Replace($PWD.Path + '\' , ''))' } | Out-File -Encoding ascii SHA256SUMS"
         shell: bash
 
       - uses: actions/upload-artifact@v4
@@ -263,7 +233,7 @@ jobs:
           merge-multiple: true
           path: builds
 
-      - name: Create universal binary + bundle + .app.zip + .dmg
+      - name: Create universal binary + .app bundle + .app.zip + .dmg
         run: |
           set -e
           mkdir -p release
@@ -271,7 +241,6 @@ jobs:
           lipo -create -output out/lemon-watch-mac-universal \
             builds/lemon-watch-aarch64 builds/lemon-watch-x86_64
 
-          # .app bundle
           mkdir -p "release/LemonWatch.app/Contents/MacOS"
           cp out/lemon-watch-mac-universal "release/LemonWatch.app/Contents/MacOS/LemonWatch"
           chmod +x "release/LemonWatch.app/Contents/MacOS/LemonWatch"
@@ -298,16 +267,12 @@ jobs:
 
           cd release
           zip -r "../lemon-watch-1.0.0-mac-universal.app.zip" "LemonWatch.app"
-          cd ..
-
-          # .dmg
           hdiutil create -volname LemonWatch \
-            -srcfolder "release/LemonWatch.app" \
-            -ov -format UDZO "release/lemon-watch-1.0.0-mac-universal.dmg"
+            -srcfolder "LemonWatch.app" \
+            -ov -format UDZO "../lemon-watch-1.0.0-mac-universal.dmg"
 
-          # portable exe-like unix bundle for completeness
-          cp out/lemon-watch-mac-universal release/lemon-watch-1.0.0-mac-universal
-          chmod +x release/lemon-watch-1.0.0-mac-universal
+          cp out/lemon-watch-mac-universal "lemon-watch-1.0.0-mac-universal"
+          chmod +x "lemon-watch-1.0.0-mac-universal"
         shell: bash
 
       - name: Compute SHA256SUMS
@@ -349,7 +314,6 @@ jobs:
           if [ -f assets/icon.png ]; then
             cp assets/icon.png AppImage/icon.png
           else
-            # generate a tiny placeholder icon so AppImageTool does not fail
             python3 - <<'PY'
             import struct, zlib
             def create_png(path, w=64, h=64):
@@ -360,14 +324,8 @@ jobs:
                 ihdr = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
                 raw = b''.join(b'\x00' + b'\x00' * (w * 3) for _ in range(h))
                 idat = zlib.compress(raw)
-                gen = b''.join([
-                    sig,
-                    chunk(b'IHDR', ihdr),
-                    chunk(b'IDAT', idat),
-                    chunk(b'IEND', b''),
-                ])
                 with open(path, 'wb') as f:
-                    f.write(gen)
+                    f.write(b''.join([sig, chunk(b'IHDR', ihdr), chunk(b'IDAT', idat), chunk(b'IEND', b'')]))
             create_png('AppImage/icon.png')
             PY
           fi
@@ -378,15 +336,16 @@ jobs:
           appimagetool AppImage lemon-watch-1.0.0-linux-x86_64.AppImage
         shell: bash
 
-      - name: Package Flatpak (if flatpak-builder available)
+      - name: Package Flatpak
         run: |
           if ! command -v flatpak-builder >/dev/null 2>&1; then
             echo "flatpak-builder not available; skipping flatpak"
             exit 0
           fi
           flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
-          flatpak-builder --release --repo=repo flatpak dev.llastudio.lemon-watch.yml
-          flatpak build-bundle repo lemon-watch-1.0.0-x86_64.flatpak dev.llastudio.lemon-watch
+          mkdir -p flatpak-repo
+          flatpak-builder --release --repo=flatpak-repo flatpak dev.llastudio.lemon-watch.yml
+          flatpak build-bundle flatpak-repo lemon-watch-1.0.0-x86_64.flatpak dev.llastudio.lemon-watch
         shell: bash
         continue-on-error: true
 
