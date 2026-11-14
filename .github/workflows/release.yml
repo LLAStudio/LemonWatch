@@ -44,8 +44,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential pkg-config libssl-dev \
-            libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
-            librsvg2-dev libxdo-dev libxcb-shape0-dev libxcb-xfixes0-dev
+            libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxkbcommon-dev libfontconfig1-dev
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -54,6 +54,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build release binary
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+          CFLAGS: "-Wno-error -Wno-deprecated-declarations"
         run: cargo build --release --target ${{ matrix.target }}
         timeout-minutes: 45
 
@@ -75,10 +78,9 @@ jobs:
 
   package-windows:
     needs: [build]
+    if: always() && needs.build.result != 'cancelled'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-
       - uses: actions/download-artifact@v4
         with:
           name: builds-windows-latest-x86_64-pc-windows-msvc
@@ -87,7 +89,7 @@ jobs:
       - name: Package portable .exe
         run: |
           mkdir -p release
-          cp builds/lemon-watch.exe release/${{ env.APP_NAME }}-win-x64.exe
+          cp builds/lemon-watch.exe "release/${{ env.APP_NAME }}-win-x64.exe"
         shell: bash
 
       - uses: actions/upload-artifact@v4
@@ -98,6 +100,7 @@ jobs:
 
   package-macos:
     needs: [build]
+    if: always() && needs.build.result != 'cancelled'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -108,22 +111,31 @@ jobs:
           merge-multiple: true
           path: builds
 
-      - name: Create universal binary + .app.zip + .dmg
+      - name: Create .app.zip and .dmg
         run: |
           set -e
           mkdir -p out release
 
-          lipo -create -output out/lemon-watch-mac-universal \
-            builds/lemon-watch-aarch64 builds/lemon-watch-x86_64
+          if [ -f builds/lemon-watch-aarch64 ] && [ -f builds/lemon-watch-x86_64 ]; then
+            lipo -create -output out/lemon-watch-mac \
+              builds/lemon-watch-aarch64 builds/lemon-watch-x86_64
+          elif [ -f builds/lemon-watch-aarch64 ]; then
+            cp builds/lemon-watch-aarch64 out/lemon-watch-mac
+          elif [ -f builds/lemon-watch-x86_64 ]; then
+            cp builds/lemon-watch-x86_64 out/lemon-watch-mac
+          else
+            echo "No macOS binary found"
+            exit 1
+          fi
 
           mkdir -p "release/LemonWatch.app/Contents/MacOS"
           mkdir -p "release/LemonWatch.app/Contents/Resources"
-          cp out/lemon-watch-mac-universal "release/LemonWatch.app/Contents/MacOS/LemonWatch"
+          cp out/lemon-watch-mac "release/LemonWatch.app/Contents/MacOS/LemonWatch"
           chmod +x "release/LemonWatch.app/Contents/MacOS/LemonWatch"
 
           cat > "release/LemonWatch.app/Contents/Info.plist" <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://apple.com">
           <plist version="1.0">
           <dict>
             <key>CFBundleExecutable</key><string>LemonWatch</string>
@@ -133,7 +145,8 @@ jobs:
             <key>CFBundlePackageType</key><string>APPL</string>
             <key>CFBundleShortVersionString</key><string>1.0.0</string>
             <key>CFBundleVersion</key><string>1.0.0</string>
-            <key>LSMinimumSystemVersion</key><string>10.13</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>NSHighResolutionCapable</key><true/>
           </dict>
           </plist>
           EOF
@@ -145,10 +158,13 @@ jobs:
           (
             cd release
             zip -r "lemon-watch-mac-universal.app.zip" "LemonWatch.app"
+            mkdir -p dmg-root
+            cp -R "LemonWatch.app" dmg-root/
+            ln -s /Applications dmg-root/Applications
             hdiutil create -volname "LemonWatch" \
-              -srcfolder "LemonWatch.app" \
+              -srcfolder dmg-root \
               -ov -format UDZO "lemon-watch-mac-universal.dmg"
-            rm -rf "LemonWatch.app"
+            rm -rf "LemonWatch.app" dmg-root
           )
         shell: bash
 
@@ -160,6 +176,7 @@ jobs:
 
   package-linux:
     needs: [build]
+    if: always() && needs.build.result != 'cancelled'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -211,19 +228,15 @@ jobs:
 
       - name: Package Flatpak
         run: |
-          if [ -f dev.llastudio.lemon-watch.yml ]; then
-            flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-            mkdir -p flatpak-repo release
-            flatpak-builder --user --install-deps-from=flathub --force-clean --repo=flatpak-repo flatpak-build dev.llastudio.lemon-watch.yml
-            flatpak build-bundle flatpak-repo "release/lemon-watch-x86_64.flatpak" dev.llastudio.lemon-watch
-          else
-            echo "Manifest dev.llastudio.lemon-watch.yml introuvable, création d'un Flatpak autonome..."
-            flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-            flatpak install --user -y flathub org.freedesktop.Platform//23.08 org.freedesktop.Sdk//23.08
-            cat > flatpak-auto.yml <<'EOF'
+          set -e
+          mkdir -p flatpak-repo release
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org
+          flatpak install --user -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
+
+          cat > flatpak-bin.yml <<'EOF'
           app-id: dev.llastudio.lemon-watch
           runtime: org.freedesktop.Platform
-          runtime-version: '23.08'
+          runtime-version: '24.08'
           sdk: org.freedesktop.Sdk
           command: lemon-watch
           finish-args:
@@ -241,10 +254,9 @@ jobs:
                 - type: file
                   path: builds/lemon-watch-linux
           EOF
-            mkdir -p flatpak-repo release
-            flatpak-builder --user --force-clean --repo=flatpak-repo flatpak-build flatpak-auto.yml
-            flatpak build-bundle flatpak-repo "release/lemon-watch-x86_64.flatpak" dev.llastudio.lemon-watch
-          fi
+
+          flatpak-builder --user --force-clean --repo=flatpak-repo flatpak-build flatpak-bin.yml
+          flatpak build-bundle flatpak-repo "release/lemon-watch-x86_64.flatpak" dev.llastudio.lemon-watch
         shell: bash
         continue-on-error: true
 
@@ -256,8 +268,8 @@ jobs:
 
   publish-release:
     needs: [package-windows, package-macos, package-linux]
+    if: always() && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/download-artifact@v4
         with:
