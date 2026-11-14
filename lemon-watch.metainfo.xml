@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.llastudio.lemon-watch</id>
+  <name>LemonWatch</name>
+  <summary>Instant workspace cache scanner and purger</summary>
+  <description>
+    <p>
+      LemonWatch is a fast, native desktop GUI for scanning development workspaces
+      and reclaiming disk space from stale build caches. It detects projects by
+      their markers (package.json, Cargo.toml, pyproject.toml, go.mod, composer.json,
+      .git) and lists reclaimable cache directories such as node_modules, .next,
+      target, .venv, __pycache__, vendor, and more.
+    </p>
+    <p>
+      Features include multi-threaded scanning with rayon, ecosystem badges (Node,
+      Rust, Python, Go), dormancy detection (last-active timestamps), safe one-click
+      purge with confirmation and progress, and a CLI mode with --dry-run and --json.
+    </p>
+  </description>
+  <developer_name>LLAStudio</developer_name>
+  <url type="homepage">https://github.com/LLAStudio/LemonWatch</url>
+  <url type="bugtracker">https://github.com/LLAStudio/LemonWatch/issues</url>
+  <launchable type="desktop-id">dev.llastudio.lemon-watch.desktop</launchable>
+  <categories>
+    <category>Utility</category>
+    <category>Development</category>
+    <category>System</category>
+  </categories>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="1.0.0" date="2026-11-14">
+      <description>
+        <p>Initial release of LemonWatch.</p>
+        <ul>
+          <li>Multi-threaded workspace cache scanner</li>
+          <li>egui native desktop GUI with LLAStudio dark Lemon theme</li>
+          <li>Safe cache purge with confirmation and progress</li>
+          <li>CLI modes: --dry-run and --json</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+  <provides>
+    <binary>lemon-watch</binary>
+  </provides>
+</component>
