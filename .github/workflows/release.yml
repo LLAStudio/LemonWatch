@@ -48,15 +48,19 @@ jobs:
         include:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            bin: lemon-watch.exe
             artifact: lemon-watch.exe
           - os: macos-latest
             target: aarch64-apple-darwin
+            bin: lemon-watch
             artifact: lemon-watch-aarch64
           - os: macos-latest
             target: x86_64-apple-darwin
+            bin: lemon-watch
             artifact: lemon-watch-x86_64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            bin: lemon-watch
             artifact: lemon-watch-linux
 
     steps:
@@ -89,7 +93,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          cp "target/${{ matrix.target }}/release/${{ matrix.artifact }}" "out/${{ matrix.artifact }}"
+          cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "out/${{ matrix.artifact }}"
           ls -la out
 
       - name: Upload build artifact
@@ -203,7 +207,27 @@ jobs:
           SectionEnd
           NSIS
           sed -i "s/@VERSION@/${VER}/g" inst.nsi
-          makensis -V3 inst.nsi
+
+          MAKENSIS="$(command -v makensis || true)"
+          if [ -z "$MAKENSIS" ] && [ -x "/c/Program Files (x86)/NSIS/makensis.exe" ]; then
+            MAKENSIS="/c/Program Files (x86)/NSIS/makensis.exe"
+          fi
+          if [ -z "$MAKENSIS" ]; then
+            echo "::error::makensis was not found on PATH; NSIS install contents:"
+            ls -la "/c/Program Files (x86)/NSIS" 2>&1 || true
+            exit 1
+          fi
+          echo "Using $MAKENSIS"
+
+          set +e
+          "$MAKENSIS" -V3 inst.nsi > nsis-build.log 2>&1
+          NSIS_STATUS=$?
+          set -e
+          cat nsis-build.log
+          if [ "$NSIS_STATUS" -ne 0 ]; then
+            echo "::error::makensis failed: $(tr '\n' ' ' < nsis-build.log | tail -c 400)"
+            exit "$NSIS_STATUS"
+          fi
           ls -la release
 
       - name: Package .msi (WiX v4)
@@ -241,6 +265,7 @@ jobs:
           WXS
           sed -i "s/@VERSION@/${VER}/g" product.wxs
           wix build -arch x64 product.wxs -out "release/lemon-watch-${VER}-win-x64.msi"
+          rm -f release/*.wixpdb
           ls -la release
 
       - name: List packaged files
@@ -508,6 +533,18 @@ jobs:
           (cd final && sha256sum * > SHA256SUMS)
           echo "SHA256SUMS:"
           cat final/SHA256SUMS
+
+      - name: Remove build-only files from an existing release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ needs.prepare.outputs.tag }}"
+          gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null \
+            | grep -E '\.(wixpdb|pdb|log)$' \
+            | while read -r asset; do
+                echo "removing $asset"
+                gh release delete-asset "$TAG" "$asset" --yes
+              done || true
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
