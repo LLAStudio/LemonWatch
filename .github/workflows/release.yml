@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -12,8 +13,32 @@ env:
   APP_NAME: lemon-watch
 
 jobs:
+  prepare:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version from Cargo.toml
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(awk -F'"' '/^version = /{print $2; exit}' Cargo.toml)"
+          if [ -z "$VERSION" ]; then
+            echo "::error::could not read the package version from Cargo.toml"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing v$VERSION"
+
   build:
     name: Build ${{ matrix.target }}
+    needs: [prepare]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -75,9 +100,11 @@ jobs:
 
   package-windows:
     name: Package Windows
-    needs: [build]
-    if: always() && needs.build.result != 'cancelled'
+    needs: [prepare, build]
+    if: always() && needs.build.result != 'cancelled' && needs.prepare.result == 'success'
     runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
 
     steps:
       - uses: actions/checkout@v4
@@ -107,7 +134,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VER="${GITHUB_REF_NAME#v}"
+          VER="${VERSION}"
           mkdir -p release
           cp builds/lemon-watch.exe "release/lemon-watch-${VER}-win-x64.exe"
           ls -la release
@@ -117,7 +144,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VER="${GITHUB_REF_NAME#v}"
+          VER="${VERSION}"
           mkdir -p release
           cat > inst.nsi <<'NSIS'
           Unicode True
@@ -182,7 +209,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VER="${GITHUB_REF_NAME#v}"
+          VER="${VERSION}"
           mkdir -p release
           cat > product.wxs <<'WXS'
           <?xml version="1.0" encoding="UTF-8"?>
@@ -230,9 +257,11 @@ jobs:
 
   package-macos:
     name: Package macOS
-    needs: [build]
-    if: always() && needs.build.result != 'cancelled'
+    needs: [prepare, build]
+    if: always() && needs.build.result != 'cancelled' && needs.prepare.result == 'success'
     runs-on: macos-latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
 
     steps:
       - uses: actions/checkout@v4
@@ -261,7 +290,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VER="${GITHUB_REF_NAME#v}"
+          VER="${VERSION}"
           mkdir -p out release
           ls -la builds || true
 
@@ -336,9 +365,11 @@ jobs:
 
   package-linux:
     name: Package Linux
-    needs: [build]
-    if: always() && needs.build.result != 'cancelled'
+    needs: [prepare, build]
+    if: always() && needs.build.result != 'cancelled' && needs.prepare.result == 'success'
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
 
     steps:
       - uses: actions/checkout@v4
@@ -378,7 +409,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VER="${GITHUB_REF_NAME#v}"
+          VER="${VERSION}"
           export APPIMAGE_EXTRACT_AND_RUN=1
           export PATH="$HOME/.local/bin:$PATH"
           mkdir -p release
@@ -413,7 +444,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VER="${GITHUB_REF_NAME#v}"
+          VER="${VERSION}"
           mkdir -p release flatpak-build
           cp builds/lemon-watch-linux flatpak-build/lemon-watch
           chmod +x flatpak-build/lemon-watch
@@ -444,9 +475,11 @@ jobs:
 
   publish-release:
     name: Publish Release
-    needs: [package-windows, package-macos, package-linux]
-    if: ${{ !cancelled() }}
+    needs: [prepare, package-windows, package-macos, package-linux]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
 
     steps:
       - uses: actions/checkout@v4
@@ -477,6 +510,8 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: LemonWatch ${{ needs.prepare.outputs.tag }}
           files: final/*
           generate_release_notes: true
           fail_on_unmatched_files: false
