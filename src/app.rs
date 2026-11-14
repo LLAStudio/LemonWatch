@@ -8,7 +8,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
 use eframe::egui::{self, Color32, Context, Ui};
-use open;
+use open::that;
 
 const DORMANCY_DAYS: u64 = 30;
 
@@ -442,7 +442,7 @@ fn render_project_list(ui: &mut Ui, state: &mut AppState) {
                     }
                     ui.add_space(4.0);
                     if ui.button("Open").clicked() {
-                        if let Err(e) = open::that(path) {
+                        if let Err(e) = that(path) {
                             state.toasts.lock().unwrap().push(Toast {
                                 text: format!("Could not open folder: {}", e),
                                 color: theme::CORAL,

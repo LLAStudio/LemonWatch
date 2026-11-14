@@ -1,42 +1,27 @@
 app-id: dev.llastudio.lemon-watch
-runtime: androidx.required
+runtime: org.freedesktop.Platform
 runtime-version: '23.08'
-sdk: org.freedesktop.Platform//23.08
-sdk-extensions:
-  - org.freedesktop.Sdk.Extension.rustlang//23.08
-finish-arg: --share=network
-finish-arg: --device=drm
-finish-arg: --socket=wayland
-finish-arg: --socket=fallback-x11
-finish-arg: --share=ipc
-finish-arg: --socket=pulseaudio
+sdk: org.freedesktop.Sdk
 command: lemon-watch
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
 modules:
   - name: lemon-watch
     buildsystem: simple
     build-commands:
       - install -Dm755 lemon-watch /app/bin/lemon-watch
-      - install -Dm644 ../assets/icon.png /app/share/icons/hicolor/512x512/apps/dev.llastudio.lemon-watch.png
-    sources:
-      - type: file
-        path: target/x86_64-unknown-linux-gnu/release/lemon-watch
-        dest: .
-      - type: dir
-        path: assets
-        dest: .
-    build-options:
-      append-path: /usr/lib/sdk/rustlang//bin
-      env:
-        CARGO_HOME: /run/build/lemon-watch/cargo
-        RUST_LOG: info
-    build-only: true
-    # Remote source would normally be a download; here we assume the binary is prebuilt and placed by CI.
-    # For a real manifest, replace with a download/source and build step.
-  - name: icons
-    buildsystem: simple
-    build-commands:
       - install -Dm644 icon.png /app/share/icons/hicolor/512x512/apps/dev.llastudio.lemon-watch.png
+      - install -Dm644 dev.llastudio.lemon-watch.desktop /app/share/applications/dev.llastudio.lemon-watch.desktop
     sources:
+      # Prebuilt binary and metadata are staged locally by the release workflow,
+      # so flatpak-builder never needs network access to fetch sources.
       - type: file
-        path: assets/icon.png
-        dest: icon.png
+        path: lemon-watch
+      - type: file
+        path: icon.png
+      - type: file
+        path: dev.llastudio.lemon-watch.desktop

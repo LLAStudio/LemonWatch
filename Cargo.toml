@@ -1,6 +1,6 @@
 [package]
 name = "lemon-watch"
-version = "1.0.0"
+version = "1.0.6"
 edition = "2021"
 authors = ["LLAStudio"]
 description = "🍋 LemonWatch — Instant workspace cache scanner & purger. Zero-config micro-utility with a native egui desktop GUI."
@@ -8,8 +8,8 @@ license = "MIT"
 repository = "https://github.com/LLAStudio/LemonWatch"
 
 [dependencies]
-eframe = "0.28"
-egui = "0.28"
+eframe = "0.30"
+egui = "0.30"
 rfd = "0.15"
 walkdir = "2.5"
 rayon = "1.10"

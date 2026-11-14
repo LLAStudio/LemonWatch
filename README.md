@@ -8,6 +8,8 @@
 
 ## Screenshots
 
+![LemonWatch screenshot](assets/screenshot.png)
+
 - **Header:** Workspace path + Change Folder / Rescan buttons.
 - **KPI cards:** Total Reclaimable (Lemon Yellow), Dormant Projects >30d (Coral), Space Freed This Session (Lime).
 - **Filter bar:** Live search, ecosystem pills (All / Node / Rust / Python / Other), sort dropdown, Select Dormant / Select All / Clear Selection, Purge Selected.
@@ -26,10 +28,6 @@
 - **Strict deletion guardrails** — Verifies target dir name is in the whitelist AND sits beside a project marker before deleting.
 - **CLI headless mode** — `--dry-run` and `--json` flags via `clap`.
 
-## Screenshot
-
-![LemonWatch screenshot](assets/screenshot.png)
-
 ## Installation
 
 ### Pre-built binaries
@@ -38,29 +36,29 @@ Download the latest release for your platform from [GitHub Releases](https://git
 
 | Platform | Archive |
 |---|---|
-| Linux (x86_64) | `lemon-watch-1.0.0-linux-x86_64.AppImage` |
-| Linux (Flatpak) | `lemon-watch-1.0.0-x86_64.flatpak` |
-| Windows | `lemon-watch-1.0.0-win-x64.exe` (portable), `.msi`, `.setup.exe` |
-| macOS (Universal) | `lemon-watch-1.0.0-mac-universal.app.zip`, `.dmg` |
+| Linux (x86_64) | `lemon-watch-<version>-linux-x86_64.AppImage` |
+| Linux (Flatpak) | `lemon-watch-<version>-x86_64.flatpak` |
+| Windows | `lemon-watch-<version>-win-x64.exe` (portable), `.msi`, `.setup.exe` |
+| macOS (Universal) | `lemon-watch-<version>-mac-universal.app.zip`, `.dmg` |
 
 **Linux (AppImage):**
 ```bash
-chmod +x lemon-watch-1.0.0-linux-x86_64.AppImage
-./lemon-watch-1.0.0-linux-x86_64.AppImage
+chmod +x lemon-watch-<version>-linux-x86_64.AppImage
+./lemon-watch-<version>-linux-x86_64.AppImage
 ```
 
 **Linux (Flatpak):**
 ```bash
-flatpak install --user lemon-watch-1.0.0-x86_64.flatpak
+flatpak install --user lemon-watch-<version>-x86_64.flatpak
 flatpak run dev.llastudio.lemon-watch
 ```
 
 **Windows:**
-- Run `lemon-watch-1.0.0-win-x64-setup.exe` or `lemon-watch-1.0.0-win-x64.msi` to install, or use the portable `.exe`.
+- Run `lemon-watch-Setup-<version>.exe` or `lemon-watch-<version>-win-x64.msi` to install, or use the portable `.exe`.
 - SmartScreen may show "More info -> Run anyway" for unsigned binaries. This is expected.
 
 **macOS:**
-- Open `lemon-watch-1.0.0-mac-universal.dmg` and drag to Applications, or unzip `.app.zip` and place in `/Applications`.
+- Open `lemon-watch-<version>-mac-universal.dmg` and drag to Applications, or unzip `.app.zip` and place in `/Applications`.
 - For unsigned builds, run: `xattr -dr com.apple.quarantine /Applications/LemonWatch.app`
 
 ### Verify checksums
@@ -70,7 +68,7 @@ flatpak run dev.llastudio.lemon-watch
 sha256sum -c SHA256SUMS
 
 # Windows PowerShell
-Get-FileHash lemon-watch-1.0.0-win-x64.exe -Algorithm SHA256
+Get-FileHash lemon-watch-<version>-win-x64.exe -Algorithm SHA256
 ```
 
 ### From source (Cargo)
@@ -113,7 +111,7 @@ lemon-watch --json ~/dev
 
 ### Requirements
 
-- Rust 1.100+ (or the MSRV specified in `rust-toolchain.toml` if present)
+- Rust 1.80+ (or the MSRV specified in `rust-toolchain.toml` if present)
 - For macOS: Xcode CLT or equivalent
 - For Windows: MSVC build tools or GNU toolchain
 - For Linux AppImage: `appimagetool`
@@ -145,8 +143,8 @@ Pushing a Git tag `v*` triggers the GitHub Actions release workflow.
 
 ```bash
 git add .
-git commit -m "chore: prepare v1.0.0 release"
-git tag v1.0.0
+git commit -m "chore: prepare vX.Y.Z release"
+git tag vX.Y.Z
 git push origin main --tags
 ```
 
@@ -169,15 +167,15 @@ cargo test
 cargo run
 ```
 
-### Icon generation
+### Icons
 
-Icons are stored in `assets/`. To regenerate:
+Pre-generated icons live in `assets/` — there are no icon-generation scripts in this repo.
 
 - `icon.png` — 512x512 lemon/lime branded PNG.
 - `icon.ico` — Windows icon (multi-resolution).
 - `icon.icns` — macOS icon set.
 
-Use `scripts/make-icons.py` (Python + Pillow) or `scripts/make-icons.rs` (pure Rust) from the repo if you need to rebuild them.
+If new icons are needed, add them directly to `assets/`.
 
 ## License
 
