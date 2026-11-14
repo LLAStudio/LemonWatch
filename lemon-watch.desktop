@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=LemonWatch
+Comment=Instant workspace cache scanner and purger
+GenericName=Workspace Cache Scanner
+Exec=lemon-watch %F
+Icon=dev.llastudio.lemon-watch
+Terminal=false
+Type=Application
+Categories=Utility;Development;System;
+Keywords=cleanup;cache;nodemodules;target;venv;disk;space;
+StartupWMClass=lemon-watch

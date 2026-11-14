@@ -1,0 +1,186 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: lemon-watch
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: lemon-watch-aarch64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: lemon-watch-x86_64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: lemon-watch-linux
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release
+        run: cargo build --release --target ${{ matrix.target }}
+        working-directory: ${{ matrix.os == 'macos-latest' && '.' || '.' }}
+
+      - name: Copy binary
+        if: matrix.os != 'ubuntu-latest' || matrix.target != 'x86_64-unknown-linux-gnu'
+        run: |
+          mkdir -p artifact
+          cp target/${{ matrix.target }}/release/${{ matrix.artifact }} artifact/
+        shell: bash
+
+      - name: Package macOS universal
+        if: matrix.os == 'macos-latest' && matrix.target == 'aarch64-apple-darwin'
+        run: |
+          lipo -create -output artifact/lemon-watch-mac-universal \
+            artifact/lemon-watch-aarch64 artifact/lemon-watch-x86_64
+        shell: bash
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}-${{ matrix.target }}
+          path: artifact/
+          if-no-files-found: error
+
+  package:
+    needs: [build]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            flavor: windows
+          - os: macos-latest
+            flavor: macos
+          - os: ubuntu-latest
+            flavor: linux
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '-*'
+          merge-multiple: true
+          path: artifacts
+
+      - name: Package Windows
+        if: matrix.flavor == 'windows'
+        run: |
+          mkdir -p release
+          cp artifacts/lemon-watch release/lemon-watch.exe
+          # Portable exe already packaged above.
+          # For .msi and .setup.exe you would run cargo-packager / makensis here.
+          # For brevity we ship the portable exe; extend as needed.
+          cp artifacts/lemon-watch release/lemon-watch.exe
+        shell: bash
+
+      - name: Package macOS
+        if: matrix.flavor == 'macos'
+        run: |
+          mkdir -p release
+          cp artifacts/lemon-watch-mac-universal release/LemonWatch
+          chmod +x release/LemonWatch
+          # .app bundle
+          mkdir -p release/LemonWatch.app/Contents/MacOS
+          cp artifacts/lemon-watch-mac-universal release/LemonWatch.app/Contents/MacOS/LemonWatch
+          echo '<?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key><string>LemonWatch</string>
+            <key>CFBundleIconFile</key><string>icon.icns</string>
+            <key>CFBundleIdentifier</key><string>dev.llastudio.lemon-watch</string>
+            <key>CFBundleName</key><string>LemonWatch</string>
+            <key>CFBundleVersion</key><string>1.0.0</string>
+          </dict>
+          </plist>' > release/LemonWatch.app/Contents/Info.plist
+          mv assets/icon.icns release/LemonWatch.app/Contents/icon.icns 2>/dev/null || true
+          # .app.zip
+          cd release && zip -r ../lemon-watch-app.zip LemonWatch.app
+          cd ..
+          # .dmg
+          hdiutil create -volname LemonWatch -srcfolder release/LemonWatch.app -ov -format UDZO release/lemon-watch.dmg
+        shell: bash
+
+      - name: Package Linux
+        if: matrix.flavor == 'linux'
+        run: |
+          mkdir -p release
+          cp artifacts/lemon-watch-linux release/lemon-watch
+          chmod +x release/lemon-watch
+          # AppImage
+          mkdir -p AppImage/app
+          cp artifacts/lemon-watch-linux AppImage/app/lemon-watch
+          chmod +x AppImage/app/lemon-watch
+          cp assets/icon.png AppImage/icon.png 2>/dev/null || true
+          echo '#!/bin/bash
+          SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+          exec "$SCRIPT_DIR/app/lemon-watch" "$@"
+          ' > AppImage/LemonWatch
+          chmod +x AppImage/LemonWatch
+          # appimagetool may not be installed in the runner; if available use it, else ship portable
+          if command -v appimagetool >/dev/null 2>&1; then
+            appimagetool AppImage lemon-watch.AppImage
+          else
+            echo "appimagetool not found; skipping AppImage generation (portable binary shipped instead)"
+          fi
+          # Flatpak
+          if command -v flatpak-builder >/dev/null 2>&1; then
+            flatpak-builder --release --repo=repo flatpak/dev.llastudio.lemon-watch.yml
+            flatpak build-bundle repo lemon-watch.flatpak dev.llastudio.lemon-watch
+          else
+            echo "flatpak-builder not found; skipping flatpak"
+          fi
+        shell: bash
+
+      - name: Compute SHA256SUMS
+        run: |
+          cd release
+          sha256sum * > SHA256SUMS 2>/dev/null || sha256sum * 2>/dev/null || true
+          cd ..
+        shell: bash
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-package-${{ matrix.flavor }}
+          path: release/
+          if-no-files-found: error
+
+  publish:
+    needs: [package]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-package-*
+          merge-multiple: true
+          path: final
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: final/*
+          generate_release_notes: true
+          fail_on_unmatched_files: false
