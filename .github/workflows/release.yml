@@ -8,6 +8,9 @@ on:
 permissions:
   contents: write
 
+env:
+  APP_NAME: lemon-watch
+
 jobs:
   build:
     runs-on: ${{ matrix.os }}
@@ -16,16 +19,16 @@ jobs:
         include:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact: lemon-watch
+            bin: lemon-watch.exe
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact: lemon-watch-aarch64
+            bin: lemon-watch-aarch64
           - os: macos-latest
             target: x86_64-apple-darwin
-            artifact: lemon-watch-x86_64
+            bin: lemon-watch-x86_64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact: lemon-watch-linux
+            bin: lemon-watch-linux
 
     steps:
       - uses: actions/checkout@v4
@@ -36,74 +39,245 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build release
+      - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
-        working-directory: ${{ matrix.os == 'macos-latest' && '.' || '.' }}
 
-      - name: Copy binary
-        if: matrix.os != 'ubuntu-latest' || matrix.target != 'x86_64-unknown-linux-gnu'
+      - name: Prepare artifact directory
         run: |
-          mkdir -p artifact
-          cp target/${{ matrix.target }}/release/${{ matrix.artifact }} artifact/
+          mkdir -p out
+          cp target/${{ matrix.target }}/release/${{ matrix.bin }} out/
         shell: bash
 
-      - name: Package macOS universal
-        if: matrix.os == 'macos-latest' && matrix.target == 'aarch64-apple-darwin'
+      - name: Normalize Linux binary name
+        if: matrix.os == 'ubuntu-latest'
         run: |
-          lipo -create -output artifact/lemon-watch-mac-universal \
-            artifact/lemon-watch-aarch64 artifact/lemon-watch-x86_64
+          cd out
+          cp ${{ matrix.bin }} lemon-watch-linux
+          chmod +x lemon-watch-linux
         shell: bash
 
-      - name: Upload artifact
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.os }}-${{ matrix.target }}
-          path: artifact/
+          name: builds-${{ matrix.os }}-${{ matrix.target }}
+          path: out/*
           if-no-files-found: error
 
-  package:
+  package-windows:
     needs: [build]
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: windows-latest
-            flavor: windows
-          - os: macos-latest
-            flavor: macos
-          - os: ubuntu-latest
-            flavor: linux
-
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4
         with:
-          pattern: '-*'
-          merge-multiple: true
-          path: artifacts
+          name: builds-windows-latest-x86_64-pc-windows-msvc
+          path: builds
 
-      - name: Package Windows
-        if: matrix.flavor == 'windows'
-        run: |
-          mkdir -p release
-          cp artifacts/lemon-watch release/lemon-watch.exe
-          # Portable exe already packaged above.
-          # For .msi and .setup.exe you would run cargo-packager / makensis here.
-          # For brevity we ship the portable exe; extend as needed.
-          cp artifacts/lemon-watch release/lemon-watch.exe
+      - name: Install NSIS
+        run: choco install --no-progress nsis --version 3.08.2
         shell: bash
 
-      - name: Package macOS
-        if: matrix.flavor == 'macos'
+      - name: Package portable .exe
         run: |
           mkdir -p release
-          cp artifacts/lemon-watch-mac-universal release/LemonWatch
-          chmod +x release/LemonWatch
+          cp builds/lemon-watch.exe release/${{ env.APP_NAME }}-1.0.0-win-x64.exe
+        shell: bash
+
+      - name: Package .setup.exe (NSIS)
+        run: |
+          mkdir -p nsis
+          cat > nsis/inst.nsi <<'EOF'
+          !include "MUI2.nsh"
+          !define APPNAME "LemonWatch"
+          !define EXENAME "lemon-watch.exe"
+          !define VERSION "1.0.0"
+          !define PUBLISHER "LLAStudio"
+          !define DESCRIPTION "Instant workspace cache scanner and purger"
+
+          Name "${APPNAME}"
+          OutFile "..\release\${APPNAME}-Setup-${VERSION}.exe"
+          InstallDir "$PROGRAMFILES64\${APPNAME}"
+          InstallDirRegKey HKLM "Software\${APPNAME}" "InstallDir"
+          RequestExecutionLevel admin
+
+          !insertmacro MUI_PAGE_WELCOME
+          !insertmacro MUI_PAGE_LICENSE "LICENSE"
+          !insertmacro MUI_PAGE_DIRECTORY
+          !insertmacro MUI_PAGE_INSTFILES
+          !insertmacro MUI_UNPAGE_CONFIRM
+          !insertmacro MUI_UNPAGE_INSTFILES
+
+          LangString DESC_SecMain ${LANG_ENGLISH} "Install ${APPNAME} for all users."
+
+          Section "Main" SecMain
+            SectionIn RO
+            SetOutPath "$INSTDIR"
+            File "builds\${EXENAME}"
+            WriteRegStr HKLM "Software\${APPNAME}" "InstallDir" "$INSTDIR"
+            WriteUninstaller "$INSTDIR\uninstall.exe"
+          SectionEnd
+
+          Section -Post
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "DisplayName" "${APPNAME}"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "UninstallString" "$INSTDIR\uninstall.exe"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "DisplayIcon" "$INSTDIR\${EXENAME}"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "Publisher" "${PUBLISHER}"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "DisplayVersion" "${VERSION}"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "URLInfoAbout" "https://github.com/LLAStudio/LemonWatch"
+            WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "NoModify" 1
+            WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "NoRepair" 1
+            WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "EstimatedSize" 12000
+          SectionEnd
+
+          Section -Uninstall
+            DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}"
+            Delete "$INSTDIR\${EXENAME}"
+            Delete "$INSTDIR\uninstall.exe"
+            RMDir "$INSTDIR"
+          SectionEnd
+          EOF
+          cd nsis
+          makensis inst.nsi
+        shell: bash
+
+      - name: Package .msi (WiX candle + light)
+        run: |
+          choco install --no-progress wixtoolset --version 4.0.1
+          RefreshEnv
+          mkdir -p wix
+          cat > wix/product.wxs <<'EOF'
+          <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+            <Package
+              Name="LemonWatch"
+              Publisher="LLAStudio"
+              Version="1.0.0"
+              Language="1033"
+              Manufacturer="LLAStudio"
+              InstallerVersion="500"
+              Compressed="yes"
+              InstallScope="perMachine"
+              Description="Instant workspace cache scanner and purger">
+              <MajorUpgrade DowngradeWarning="ReturnCode" />
+              <MediaTemplate EmbedMedia="yes" />
+              <FeatureRef Id="Main" />
+            </Package>
+            <Feature Id="Main" Title="LemonWatch" Level="1">
+              <ComponentRef Id="Exe" />
+              <ComponentRef Id="Uninstall" />
+            </Feature>
+            <Directory Id="ProgramFiles64Folder">
+              <Directory Id="INSTALLFOLDER" Name="LemonWatch">
+                <Component Id="Exe" Guid="*">
+                  <File Id="LemonWatchExe"
+                        Source="builds\lemon-watch.exe"
+                        KeyPath="yes" />
+                <RegistryValue Root="HKLM"
+                               Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\LemonWatch"
+                               Name="DisplayName"
+                               Value="LemonWatch"
+                               Type="string"
+                               KeyPath="yes" />
+                <RegistryValue Root="HKLM"
+                               Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\LemonWatch"
+                               Name="UninstallString"
+                               Value="[INSTALLFOLDER]uninstall.exe"
+                               Type="string" />
+                <RegistryValue Root="HKLM"
+                               Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\LemonWatch"
+                               Name="DisplayIcon"
+                               Value="[INSTALLFOLDER]lemon-watch.exe"
+                               Type="string" />
+                <RegistryValue Root="HKLM"
+                               Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\LemonWatch"
+                               Name="Publisher"
+                               Value="LLAStudio"
+                               Type="string" />
+                <RegistryValue Root="HKLM"
+                               Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\LemonWatch"
+                               Name="DisplayVersion"
+                               Value="1.0.0"
+                               Type="string" />
+              </Component>
+                <Component Id="Uninstall" Guid="*" Win64="yes">
+                  <File Id="UninstallExe"
+                        Source="wix\uninstall.exe"
+                        KeyPath="yes" />
+                </Component>
+              </Directory>
+            </Directory>
+          </Wix>
+          EOF
+          cat > wix/uninstall.wxs <<'EOF'
+          <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+            <Package Name="LemonWatchUninstaller" UpgradeCode="00000000-0000-0000-0000-000000000000" Scope="perMachine" Compressed="yes" />
+            <Feature Id="Main" Title="Uninstall" Level="1">
+              <ComponentRef Id="UninstallExe" />
+            </Feature>
+            <MediaTemplate EmbedMedia="yes" />
+            <Directory Id="CommonFilesFolder">
+              <Directory Id="UninstallFolder" Name="LemonWatch">
+                <Component Id="UninstallExe" Guid="*" Win64="yes">
+                  <File Id="UninstallExeFile"
+                        Source="wix\uninstall.exe"
+                        KeyPath="yes" />
+                </Component>
+              </Directory>
+            </Directory>
+          </Wix>
+          EOF
+          cat > wix/uninstall.cpp <<'EOF'
+          #include <windows.h>
+          int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR args, int show) {
+            return (int)ShellExecute(NULL, "runas", "msiexec.exe", "/x {REPLACEUPGRADEKEY}", NULL, SW_SHOW);
+          }
+          EOF
+          cl /nologo /O2 /MD /Fe:wix\uninstall.exe wix\uninstall.cpp 2>$null || echo "cl not available; skipping exe-based uninstaller"
+          candle wix\product.wxs -out wix\product.wixobj
+          candle wix\uninstall.wxs -out wix\uninstall.wixobj
+          light wix\product.wixobj wix\uninstall.wixobj -out release/${{ env.APP_NAME }}-1.0.0-win-x64.msi
+        shell: bash
+        continue-on-error: true
+
+      - name: Package checksums
+        run: |
+          cd release
+          powershell -Command "Get-FileHash *.exe, *.msi -Algorithm SHA256 | ForEach-Object { '$($_.Hash)  $($_.Path.Replace($PWD.Path + '\\', ''))' } | Out-File -Encoding ascii SHA256SUMS"
+        shell: bash
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: release/*
+          if-no-files-found: error
+
+  package-macos:
+    needs: [build]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: builds-macos-latest-*
+          merge-multiple: true
+          path: builds
+
+      - name: Create universal binary + bundle + .app.zip + .dmg
+        run: |
+          set -e
+          mkdir -p release
+
+          lipo -create -output out/lemon-watch-mac-universal \
+            builds/lemon-watch-aarch64 builds/lemon-watch-x86_64
+
           # .app bundle
-          mkdir -p release/LemonWatch.app/Contents/MacOS
-          cp artifacts/lemon-watch-mac-universal release/LemonWatch.app/Contents/MacOS/LemonWatch
-          echo '<?xml version="1.0" encoding="UTF-8"?>
+          mkdir -p "release/LemonWatch.app/Contents/MacOS"
+          cp out/lemon-watch-mac-universal "release/LemonWatch.app/Contents/MacOS/LemonWatch"
+          chmod +x "release/LemonWatch.app/Contents/MacOS/LemonWatch"
+
+          cat > "release/LemonWatch.app/Contents/Info.plist" <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
@@ -111,74 +285,144 @@ jobs:
             <key>CFBundleIconFile</key><string>icon.icns</string>
             <key>CFBundleIdentifier</key><string>dev.llastudio.lemon-watch</string>
             <key>CFBundleName</key><string>LemonWatch</string>
+            <key>CFBundleShortVersionString</key><string>1.0.0</string>
             <key>CFBundleVersion</key><string>1.0.0</string>
+            <key>LSMinimumSystemVersion</key><string>10.13</string>
           </dict>
-          </plist>' > release/LemonWatch.app/Contents/Info.plist
-          mv assets/icon.icns release/LemonWatch.app/Contents/icon.icns 2>/dev/null || true
-          # .app.zip
-          cd release && zip -r ../lemon-watch-app.zip LemonWatch.app
-          cd ..
-          # .dmg
-          hdiutil create -volname LemonWatch -srcfolder release/LemonWatch.app -ov -format UDZO release/lemon-watch.dmg
-        shell: bash
+          </plist>
+          EOF
 
-      - name: Package Linux
-        if: matrix.flavor == 'linux'
-        run: |
-          mkdir -p release
-          cp artifacts/lemon-watch-linux release/lemon-watch
-          chmod +x release/lemon-watch
-          # AppImage
-          mkdir -p AppImage/app
-          cp artifacts/lemon-watch-linux AppImage/app/lemon-watch
-          chmod +x AppImage/app/lemon-watch
-          cp assets/icon.png AppImage/icon.png 2>/dev/null || true
-          echo '#!/bin/bash
-          SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-          exec "$SCRIPT_DIR/app/lemon-watch" "$@"
-          ' > AppImage/LemonWatch
-          chmod +x AppImage/LemonWatch
-          # appimagetool may not be installed in the runner; if available use it, else ship portable
-          if command -v appimagetool >/dev/null 2>&1; then
-            appimagetool AppImage lemon-watch.AppImage
-          else
-            echo "appimagetool not found; skipping AppImage generation (portable binary shipped instead)"
+          if [ -f assets/icon.icns ]; then
+            cp assets/icon.icns "release/LemonWatch.app/Contents/icon.icns"
           fi
-          # Flatpak
-          if command -v flatpak-builder >/dev/null 2>&1; then
-            flatpak-builder --release --repo=repo flatpak/dev.llastudio.lemon-watch.yml
-            flatpak build-bundle repo lemon-watch.flatpak dev.llastudio.lemon-watch
-          else
-            echo "flatpak-builder not found; skipping flatpak"
-          fi
+
+          cd release
+          zip -r "../lemon-watch-1.0.0-mac-universal.app.zip" "LemonWatch.app"
+          cd ..
+
+          # .dmg
+          hdiutil create -volname LemonWatch \
+            -srcfolder "release/LemonWatch.app" \
+            -ov -format UDZO "release/lemon-watch-1.0.0-mac-universal.dmg"
+
+          # portable exe-like unix bundle for completeness
+          cp out/lemon-watch-mac-universal release/lemon-watch-1.0.0-mac-universal
+          chmod +x release/lemon-watch-1.0.0-mac-universal
         shell: bash
 
       - name: Compute SHA256SUMS
         run: |
           cd release
-          sha256sum * > SHA256SUMS 2>/dev/null || sha256sum * 2>/dev/null || true
-          cd ..
+          shasum -a 256 *.dmg *.zip *.mac-universal > SHA256SUMS
         shell: bash
 
       - uses: actions/upload-artifact@v4
         with:
-          name: release-package-${{ matrix.flavor }}
-          path: release/
+          name: release-macos
+          path: release/*
           if-no-files-found: error
 
-  publish:
-    needs: [package]
+  package-linux:
+    needs: [build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4
         with:
-          pattern: release-package-*
-          merge-multiple: true
-          path: final
+          name: builds-ubuntu-latest-x86_64-unknown-linux-gnu
+          path: builds
 
-      - name: Create Release
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y appimagetool flatpak-builder libfuse2 || true
+        shell: bash
+
+      - name: Package AppImage
+        run: |
+          set -e
+          mkdir -p AppImage/app
+          cp builds/lemon-watch-linux AppImage/app/lemon-watch
+          chmod +x AppImage/app/lemon-watch
+
+          if [ -f assets/icon.png ]; then
+            cp assets/icon.png AppImage/icon.png
+          else
+            # generate a tiny placeholder icon so AppImageTool does not fail
+            python3 - <<'PY'
+            import struct, zlib
+            def create_png(path, w=64, h=64):
+                def chunk(ctype, data):
+                    c = ctype + data
+                    return struct.pack(">I", len(data)) + c + struct.pack(">I", zlib.crc32(c) & 0xffffffff)
+                sig = b'\x89PNG\r\n\x1a\n'
+                ihdr = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
+                raw = b''.join(b'\x00' + b'\x00' * (w * 3) for _ in range(h))
+                idat = zlib.compress(raw)
+                gen = b''.join([
+                    sig,
+                    chunk(b'IHDR', ihdr),
+                    chunk(b'IDAT', idat),
+                    chunk(b'IEND', b''),
+                ])
+                with open(path, 'wb') as f:
+                    f.write(gen)
+            create_png('AppImage/icon.png')
+            PY
+          fi
+
+          printf '#!/bin/bash\ncd "$(dirname "$0")"/app && exec ./lemon-watch "$@"\n' > AppImage/LemonWatch
+          chmod +x AppImage/LemonWatch
+
+          appimagetool AppImage lemon-watch-1.0.0-linux-x86_64.AppImage
+        shell: bash
+
+      - name: Package Flatpak (if flatpak-builder available)
+        run: |
+          if ! command -v flatpak-builder >/dev/null 2>&1; then
+            echo "flatpak-builder not available; skipping flatpak"
+            exit 0
+          fi
+          flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
+          flatpak-builder --release --repo=repo flatpak dev.llastudio.lemon-watch.yml
+          flatpak build-bundle repo lemon-watch-1.0.0-x86_64.flatpak dev.llastudio.lemon-watch
+        shell: bash
+        continue-on-error: true
+
+      - name: Compute SHA256SUMS
+        run: |
+          cd release
+          sha256sum *.AppImage *.flatpak lemon-watch-linux 2>/dev/null > SHA256SUMS
+        shell: bash
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: release/*
+          if-no-files-found: error
+
+  publish-release:
+    needs: [package-windows, package-macos, package-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: release
+
+      - name: Assemble final artifacts
+        run: |
+          mkdir -p final
+          cp -r release/* final/
+          (cd final && sha256sum * > SHA256SUMS) || true
+        shell: bash
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: final/*
