@@ -318,7 +318,7 @@ jobs:
         run: |
           set -euo pipefail
           VER="${VERSION}"
-          mkdir -p out release
+          mkdir -p out release build
           ls -la builds || true
 
           if [ -f builds/lemon-watch-aarch64 ] && [ -f builds/lemon-watch-x86_64 ]; then
@@ -334,7 +334,9 @@ jobs:
           chmod +x out/lemon-watch
           lipo -info out/lemon-watch || true
 
-          APP="release/LemonWatch.app"
+          # Keep the .app bundle out of release/, which is uploaded verbatim:
+          # a directory inside the artifact breaks checksum generation.
+          APP="build/LemonWatch.app"
           rm -rf "$APP"
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
           cp out/lemon-watch "$APP/Contents/MacOS/LemonWatch"
@@ -530,7 +532,7 @@ jobs:
           fi
           echo "Artifacts to publish:"
           ls -la final
-          (cd final && sha256sum * > SHA256SUMS)
+          (cd final && for f in *; do if [ -f "$f" ] && [ "$f" != SHA256SUMS ]; then sha256sum "$f"; fi; done > SHA256SUMS)
           echo "SHA256SUMS:"
           cat final/SHA256SUMS
 
