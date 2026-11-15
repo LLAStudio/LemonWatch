@@ -57,8 +57,11 @@ const PROJECT_MARKERS: &[&str] = &[
     "composer.json", ".git",
 ];
 
+type SizedCache = (PathBuf, u64);
+type SizedProjects = Vec<(PathBuf, Ecosystem, Vec<SizedCache>)>;
+
 fn is_cache_dir_name(name: &str) -> bool {
-    CACHE_WHITELIST.iter().any(|w| name == *w)
+    CACHE_WHITELIST.contains(&name)
 }
 
 fn detect_ecosystem(dir: &Path) -> Ecosystem {
@@ -105,7 +108,7 @@ pub fn scan_workspace(root: &Path) -> Result<Vec<Project>> {
         })
         .collect();
 
-    let sized: Vec<(PathBuf, Ecosystem, Vec<(PathBuf, u64)>)> = project_results
+    let sized: SizedProjects = project_results
         .into_par_iter()
         .map(|(dir, eco, cache_paths)| {
             let sized: Vec<(PathBuf, u64)> = cache_paths
@@ -133,7 +136,7 @@ pub fn scan_workspace(root: &Path) -> Result<Vec<Project>> {
 
     let last_actives: Vec<u64> = sized
         .par_iter()
-        .map(|(dir, _eco, cache_paths)| {
+        .map(|(dir, _eco, _cache_paths)| {
             let mut latest: Option<SystemTime> = None;
             if let Ok(rd) = std::fs::read_dir(dir) {
                 for entry in rd.flatten() {
@@ -159,8 +162,11 @@ pub fn scan_workspace(root: &Path) -> Result<Vec<Project>> {
         .collect();
 
     let mut projects = Vec::new();
-    let mut iter = sized.into_iter().zip(source_sizes.iter()).zip(last_actives.iter());
-    while let Some((((dir, eco, cache_sizes), &source_size), &last_active_secs)) = iter.next() {
+    let combined = sized
+        .into_iter()
+        .zip(source_sizes.iter())
+        .zip(last_actives.iter());
+    for (((dir, eco, cache_sizes), &source_size), &last_active_secs) in combined {
         let caches: Vec<DetectedCache> = cache_sizes
             .into_iter()
             .map(|(path, size)| DetectedCache {

@@ -15,7 +15,6 @@ const CACHE_WHITELIST: &[&str] = &[
 #[derive(Debug, Clone)]
 pub struct DeleteResult {
     pub cache_name: String,
-    pub path: PathBuf,
     pub size_bytes: u64,
     pub success: bool,
     pub reason: Option<String>,
@@ -34,7 +33,7 @@ fn verify_cache_path(path: &Path) -> Result<(), String> {
         Some(p) => p.to_path_buf(),
         None => return Err("Cannot determine parent".into()),
     };
-    let parent_has_marker = fs::read_dir(&parent).map_or(false, |rd| {
+    let parent_has_marker = fs::read_dir(&parent).is_ok_and(|rd| {
         rd.flatten().any(|e| {
             let name = e.file_name().to_string_lossy().to_string();
             ["package.json", "Cargo.toml", "pyproject.toml", "go.mod", "composer.json", ".git"]
@@ -60,14 +59,12 @@ fn delete_one(path: &Path, size_before: u64) -> DeleteResult {
         Ok(()) => match fs::remove_dir_all(path) {
             Ok(()) => DeleteResult {
                 cache_name,
-                path: path.to_path_buf(),
                 size_bytes: size_before,
                 success: true,
                 reason: None,
             },
             Err(e) => DeleteResult {
                 cache_name,
-                path: path.to_path_buf(),
                 size_bytes: size_before,
                 success: false,
                 reason: Some(e.to_string()),
@@ -75,7 +72,6 @@ fn delete_one(path: &Path, size_before: u64) -> DeleteResult {
         },
         Err(e) => DeleteResult {
             cache_name,
-            path: path.to_path_buf(),
             size_bytes: size_before,
             success: false,
             reason: Some(e),
@@ -108,7 +104,6 @@ pub fn purge_caches_background(
         }
         let _ = tx.send(DeleteResult {
             cache_name: "__done__".into(),
-            path: PathBuf::new(),
             size_bytes: 0,
             success: true,
             reason: None,

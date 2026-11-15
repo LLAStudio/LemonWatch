@@ -70,11 +70,10 @@ jobs:
             libxkbcommon-dev libwayland-dev libfontconfig1-dev \
             libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
 
-      # Correctness and suspicious lints fail the job; the remaining clippy
-      # lints are reported without blocking. Raise the bar to `-D warnings`
-      # once the current warning backlog is cleared.
+      # Every clippy and rustc warning fails the job; the crate is clean today,
+      # so this keeps it from drifting back into a warning backlog.
       - name: Clippy
-        run: cargo clippy --all-targets -- -D clippy::correctness -D clippy::suspicious
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Test
         run: cargo test --all-targets

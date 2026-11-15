@@ -13,24 +13,19 @@ use open::that;
 const DORMANCY_DAYS: u64 = 30;
 
 #[derive(Default)]
-struct FilterState {
+pub struct FilterState {
     search: String,
     ecosystem: Option<Ecosystem>,
     sort: SortKey,
     sort_idx: usize,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 enum SortKey {
+    #[default]
     LargestSize,
     OldestActivity,
     ProjectName,
-}
-
-impl Default for SortKey {
-    fn default() -> Self {
-        SortKey::LargestSize
-    }
 }
 
 pub struct AppState {
@@ -56,7 +51,7 @@ pub struct AppState {
 }
 
 #[derive(Clone)]
-struct Toast {
+pub struct Toast {
     text: String,
     color: Color32,
     born: std::time::Instant,
@@ -283,7 +278,7 @@ fn render_filter_toolbar(ui: &mut Ui, state: &mut AppState) {
                 let btn = egui::Button::new(egui::RichText::new(label).small().monospace())
                     .fill(if active { theme::BG_CARD } else { theme::BG_DARK })
                     .stroke(egui::Stroke::new(
-                        1.0,
+                        1.0_f32,
                         if active { theme::LEMON } else { theme::BORDER_SUBTLE },
                     ));
                 if ui.add(btn).clicked() {
@@ -304,7 +299,7 @@ fn render_filter_toolbar(ui: &mut Ui, state: &mut AppState) {
                 SortKey::OldestActivity => "Oldest Activity",
                 SortKey::ProjectName => "Project Name",
             };
-            egui::ComboBox::from_id_source("sort_combo")
+            egui::ComboBox::from_id_salt("sort_combo")
                 .selected_text(current_text)
                 .show_index(ui, &mut state.filter.sort_idx, 3, |idx| {
                     let _new_sort: SortKey = match idx {
@@ -370,8 +365,8 @@ fn render_filter_toolbar(ui: &mut Ui, state: &mut AppState) {
 fn render_project_list(ui: &mut Ui, state: &mut AppState) {
     // Build snapshot to avoid borrow conflicts
     let list_snapshot: Vec<(usize, String, Ecosystem, String, String, u64, PathBuf)> =
-        state.projects.iter().enumerate().filter_map(|(i, p)| {
-            Some((
+        state.projects.iter().enumerate().map(|(i, p)| {
+            (
                 i,
                 p.name.clone(),
                 p.ecosystem.clone(),
@@ -379,7 +374,7 @@ fn render_project_list(ui: &mut Ui, state: &mut AppState) {
                 format_gb(p.total_cache_bytes as f64 / 1_073_741_824.0),
                 p.total_cache_bytes,
                 p.path.clone(),
-            ))
+            )
         }).collect();
 
     let filtered: Vec<_> = if state.filter.search.is_empty() {
@@ -396,13 +391,13 @@ fn render_project_list(ui: &mut Ui, state: &mut AppState) {
     let sorted: Vec<_> = match state.filter.sort {
         SortKey::LargestSize => {
             let mut v = filtered;
-            v.sort_by(|a, b| b.5.cmp(&a.5));
+            v.sort_by_key(|p| std::cmp::Reverse(p.5));
             v
         }
         SortKey::OldestActivity => filtered,
         SortKey::ProjectName => {
             let mut v = filtered;
-            v.sort_by(|a, b| a.1.cmp(&b.1));
+            v.sort_by_key(|p| p.1.clone());
             v
         }
     };
@@ -472,16 +467,6 @@ fn ecosystem_badge(eco: Ecosystem) -> egui::RichText {
 fn last_active_color_from_str(s: &str) -> Color32 {
     if s.contains("d ago") && s.parse::<u64>().unwrap_or(0) > 30 {
         theme::CORAL
-    } else {
-        theme::TEXT_MUTED
-    }
-}
-
-fn last_active_color(proj: &Project) -> Color32 {
-    if proj.is_dormant(DORMANCY_DAYS) {
-        theme::CORAL
-    } else if proj.last_active_secs > 0 && proj.last_active_secs < 3600 * 24 * 7 {
-        theme::LIME
     } else {
         theme::TEXT_MUTED
     }
@@ -585,7 +570,6 @@ fn render_modal(ctx: &Context, state: &mut AppState) {
                     state.purge_done = 0;
                     state.purge_total = paths.len();
                     state.purge_error = None;
-                    return;
                 }
             });
         });
