@@ -39,6 +39,8 @@ pub struct AppState {
     pub dormant_bytes: u64,
     pub space_freed_gb: f64,
     pub pending_purge: Option<Vec<(String, PathBuf, u64)>>,
+    pub purge_focus_pending: bool,
+    pub search_has_focus: bool,
     pub purge_total_gb: f64,
     pub purge_active: bool,
     pub purge_done: usize,
@@ -74,6 +76,8 @@ impl Default for AppState {
             dormant_bytes: 0,
             space_freed_gb: 0.0,
             pending_purge: None,
+            purge_focus_pending: false,
+            search_has_focus: false,
             purge_total_gb: 0.0,
             purge_active: false,
             purge_done: 0,
@@ -260,7 +264,12 @@ fn kpi_card(ui: &mut Ui, label: &str, value: String, accent: Color32) {
 fn render_filter_toolbar(ui: &mut Ui, state: &mut AppState) {
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("Search:").small().color(theme::TEXT_MUTED));
-        ui.add(egui::TextEdit::singleline(&mut state.filter.search).hint_text("Filter projects..."));
+        let search = ui.add(
+            egui::TextEdit::singleline(&mut state.filter.search).hint_text("Filter projects..."),
+        );
+        // Remember whether the only text field owns the keyboard, so Escape in the
+        // purge prompt can defer to typing rather than stealing the key.
+        state.search_has_focus = search.has_focus();
         ui.add_space(12.0);
         ui.horizontal(|ui| {
             for eco in [
@@ -509,10 +518,12 @@ fn open_purge_modal(state: &mut AppState) {
     // until the user actually confirms the deletion.
     state.purge_total_gb = total as f64 / 1_073_741_824.0;
     state.pending_purge = Some(list);
+    state.purge_focus_pending = true;
 }
 
 fn cancel_purge_prompt(state: &mut AppState) {
     state.pending_purge = None;
+    state.purge_focus_pending = false;
     state.purge_active = false;
     if let Some(h) = state.purge_handle.take() {
         let _ = h.join();
@@ -570,10 +581,17 @@ fn render_modal(ctx: &Context, state: &mut AppState) {
                     return;
                 }
                 ui.add_space(8.0);
-                if ui
-                    .button(egui::RichText::new("Confirm Purge").strong().color(theme::TEXT_PRIMARY))
-                    .clicked()
-                {
+                let confirm = ui.button(
+                    egui::RichText::new("Confirm Purge")
+                        .strong()
+                        .color(theme::TEXT_PRIMARY),
+                );
+                // Focus the destructive action when the prompt opens, so Enter or
+                // Space cannot reach the toolbar button that opened it.
+                if std::mem::take(&mut state.purge_focus_pending) {
+                    confirm.request_focus();
+                }
+                if confirm.clicked() {
                     let list = state.pending_purge.take().unwrap();
                     let paths: Vec<PathBuf> = list.iter().map(|(_, p, _)| p.clone()).collect();
                     let total_bytes: u64 = list.iter().map(|(_, _, s)| *s).sum();
@@ -588,10 +606,10 @@ fn render_modal(ctx: &Context, state: &mut AppState) {
                 }
             });
         });
-    // Escape dismisses the prompt exactly like Cancel does, unless a text field
-    // is asking for keyboard input: then Escape belongs to that field. The scrim
+    // Escape dismisses the prompt exactly like Cancel does, unless the search box
+    // is the one holding the keyboard: then Escape belongs to typing. The scrim
     // stays inert, so a stray click cannot throw away a destructive confirmation.
-    if !ctx.wants_keyboard_input() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    if !state.search_has_focus && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         cancel_purge_prompt(state);
     }
     if state.purge_active && state.purge_total > 0 {
@@ -736,6 +754,10 @@ mod tests {
         );
         assert_eq!(state.purge_total, 0);
         assert!(state.purge_total_gb > 0.0);
+        assert!(
+            state.purge_focus_pending,
+            "confirm should take focus on the first frame"
+        );
     }
 
     fn run_frame(state: &mut AppState, events: Vec<egui::Event>) {
@@ -773,36 +795,32 @@ mod tests {
     }
 
     #[test]
-    fn escape_is_left_to_a_focused_text_field() {
+    fn escape_is_left_to_the_focused_search_field() {
         let mut state = state_with_one_selected_project();
         open_purge_modal(&mut state);
+        state.search_has_focus = true;
 
-        let ctx = Context::default();
-        let mut text = String::new();
-        let mut draw_search = |ctx: &Context| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                ui.text_edit_singleline(&mut text).request_focus();
-            });
-        };
-        // First pass grants focus; the second carries the Escape press.
-        let _ = ctx.run(egui::RawInput::default(), |ctx| draw_search(ctx));
-        let mut wants_keyboard = false;
-        let _ = ctx.run(
-            egui::RawInput {
-                events: vec![escape_press()],
-                ..Default::default()
-            },
-            |ctx| {
-                draw_search(ctx);
-                wants_keyboard = ctx.wants_keyboard_input();
-                render_modal(ctx, &mut state);
-            },
-        );
+        run_frame(&mut state, vec![escape_press()]);
 
-        assert!(wants_keyboard, "the text field should own keyboard input");
         assert!(
             state.pending_purge.is_some(),
-            "Escape must not steal the key from a focused text field"
+            "Escape must not steal the key from the focused search box"
+        );
+    }
+
+    #[test]
+    fn escape_works_while_confirm_holds_focus() {
+        let mut state = state_with_one_selected_project();
+        open_purge_modal(&mut state);
+        // The dialog focuses Confirm on its first frame; that must not shadow
+        // Escape, because only the search box may claim the key.
+        state.search_has_focus = false;
+
+        run_frame(&mut state, vec![escape_press()]);
+
+        assert!(
+            state.pending_purge.is_none(),
+            "a focused button must not block Escape"
         );
     }
 
@@ -816,6 +834,10 @@ mod tests {
         assert!(
             state.pending_purge.is_some(),
             "the dialog must stay until the user dismisses it"
+        );
+        assert!(
+            !state.purge_focus_pending,
+            "the focus request is one-shot, not repeated every frame"
         );
     }
 }
