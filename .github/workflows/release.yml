@@ -162,7 +162,7 @@ jobs:
           !define VERSION "@VERSION@"
 
           Name "${APPNAME}"
-          OutFile "release/lemon-watch-Setup-@VERSION@.exe"
+          OutFile "release\lemon-watch-Setup-@VERSION@.exe"
           InstallDir "$PROGRAMFILES64\${APPNAME}"
           InstallDirRegKey HKLM "Software\${APPNAME}" "InstallDir"
           RequestExecutionLevel admin
@@ -178,8 +178,8 @@ jobs:
           Section "LemonWatch" SecMain
             SectionIn RO
             SetOutPath "$INSTDIR"
-            File "builds/lemon-watch.exe"
-            WriteUninstaller "$INSTDIR/uninstall.exe"
+            File "builds\lemon-watch.exe"
+            WriteUninstaller "$INSTDIR\uninstall.exe"
             CreateShortcut "$SMPROGRAMS\LemonWatch.lnk" "$INSTDIR\${EXENAME}"
             CreateShortcut "$DESKTOP\LemonWatch.lnk" "$INSTDIR\${EXENAME}"
           SectionEnd
