@@ -297,22 +297,15 @@ fn render_filter_toolbar(ui: &mut Ui, state: &mut AppState) {
         ui.add_space(12.0);
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Sort:").small().color(theme::TEXT_MUTED));
-            let current_sort = state.filter.sort;
-            let current_text = match current_sort {
-                SortKey::LargestSize => "Largest Size",
-                SortKey::OldestActivity => "Oldest Activity",
-                SortKey::ProjectName => "Project Name",
-            };
-            egui::ComboBox::from_id_salt("sort_combo")
-                .selected_text(current_text)
-                .show_index(ui, &mut state.filter.sort_idx, 3, |idx| {
-                    let _new_sort: SortKey = match idx {
-                        0 => SortKey::LargestSize,
-                        1 => SortKey::OldestActivity,
-                        _ => SortKey::ProjectName,
-                    };
-                    ""
-                });
+            // `show_index` labels the button with the closure's text for the
+            // selected index, so the closure must return the real labels.
+            const SORT_LABELS: [&str; 3] = ["Largest Size", "Oldest Activity", "Project Name"];
+            egui::ComboBox::from_id_salt("sort_combo").show_index(
+                ui,
+                &mut state.filter.sort_idx,
+                SORT_LABELS.len(),
+                |idx| SORT_LABELS[idx],
+            );
             state.filter.sort = match state.filter.sort_idx {
                 0 => SortKey::LargestSize,
                 1 => SortKey::OldestActivity,
