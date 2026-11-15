@@ -93,8 +93,8 @@ pub struct LemonWatchApp {
 
 impl LemonWatchApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // LemonWatch ships a dark-only palette, so pin the theme instead of
-        // following the desktop preference and paint both style slots with it.
+        // The UI's text and accents assume a dark base, so pin that rather than
+        // following the desktop; apply_theme itself only adds spacing + accents.
         cc.egui_ctx.set_theme(egui::ThemePreference::Dark);
         cc.egui_ctx.all_styles_mut(theme::apply_theme);
         LemonWatchApp {
