@@ -2,6 +2,8 @@ name: CI
 
 on:
   pull_request:
+  # Lets a maintainer regenerate the README screenshot on demand.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -77,3 +79,88 @@ jobs:
 
       - name: Test
         run: cargo test --all-targets
+
+  # Source of the image in the README: builds the real binary, runs it on a
+  # software X display and screenshots the window. The artifact is the file to
+  # commit as assets/screenshot.png.
+  screenshot:
+    name: Screenshot (Xvfb)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ci-screenshot
+
+      - name: Install build and capture dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev libgtk-3-dev \
+            libxkbcommon-dev libwayland-dev libfontconfig1-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            xvfb xdotool imagemagick libgl1-mesa-dri libxkbcommon-x11-0
+
+      - name: Build
+        run: cargo build
+
+      # Sparse files give the window believable GB-scale caches without using
+      # disk, and the ages cover every inactivity badge including dormant ones.
+      - name: Create a demo workspace
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/lemon-workspace"
+          rm -rf "$W" && mkdir -p "$W"
+          project() {
+            name=$1; marker=$2; age=$3; shift 3
+            mkdir -p "$W/$name/src"
+            printf '{"name":"%s"}\n' "$name" > "$W/$name/$marker"
+            printf 'export const app = 1;\n' > "$W/$name/src/index.js"
+            for cache in "$@"; do
+              mkdir -p "$W/$name/${cache%%:*}"
+              truncate -s "${cache##*:}" "$W/$name/${cache%%:*}/blob.bin"
+            done
+            find "$W/$name" -exec touch -d "$age days ago" {} +
+          }
+          project acme-storefront package.json 2 node_modules:1717986918 .next:440401920
+          project design-system package.json 3 node_modules:1288490188
+          project ml-pipeline pyproject.toml 6 .venv:1181116006 __pycache__:18874368
+          project acme-api package.json 12 node_modules:933232640
+          project infra go.mod 30 vendor:356515840
+          project payments-core Cargo.toml 45 target:2469606195
+          project cli-tool Cargo.toml 120 target:440401920
+          project legacy-crawler pyproject.toml 210 .venv:650117120
+          project docs-site package.json 400 .next:99614720
+          project scratch-notes .git 3
+          echo "LEMON_WORKSPACE=$W" >> "$GITHUB_ENV"
+
+      - name: Capture the window
+        run: |
+          set -euo pipefail
+          xvfb-run --auto-servernum \
+            --server-args="-screen 0 1280x800x24 +extension GLX +render -noreset" \
+            bash -c '
+              set -euo pipefail
+              ./target/debug/lemon-watch "$LEMON_WORKSPACE" &
+              app=$!
+              win=$(timeout 60 xdotool search --sync --name LemonWatch | head -1)
+              sleep 8  # let the background scan finish so the list is populated
+              import -window "$win" assets/screenshot.png
+              kill "$app" || true
+            '
+          file assets/screenshot.png
+          # A blank capture still succeeds, so fail if the image is almost flat.
+          colours=$(identify -format '%k' assets/screenshot.png)
+          echo "unique colours: $colours"
+          test "$colours" -gt 50
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lemon-watch-screenshot
+          path: assets/screenshot.png
+          if-no-files-found: error
+          retention-days: 14
+
