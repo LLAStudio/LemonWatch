@@ -168,8 +168,8 @@ jobs:
             test "$colours" -gt 50
           done
           # A missed click leaves the second capture showing the list, so require
-          # a dialog-sized change: the overlay repaints ~35k pixels, while the
-          # selection state alone changes ~5k.
+          # a dialog-sized change: the overlay repaints ~20k pixels, while the
+          # selection state alone changes ~1.5k.
           changed=$(convert assets/screenshot.png assets/screenshot-purge.png \
             -compose difference -composite -colorspace Gray -threshold 10% \
             -format "%[fx:mean*w*h]" info:)

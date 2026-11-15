@@ -518,6 +518,9 @@ fn render_modal(ctx: &Context, state: &mut AppState) {
     let total: f64 = state.pending_purge.as_ref().unwrap().iter().map(|(_, _, s)| *s).sum::<u64>() as f64 / 1_073_741_824.0;
     let list_len = state.pending_purge.as_ref().unwrap().len();
     egui::Window::new("Confirm Purge")
+        // A destructive confirmation should land in the middle of the window
+        // rather than on top of the header the user just interacted with.
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .min_width(360.0)
         .show(ctx, |ui| {
             ui.heading("Confirm Cache Purge");
