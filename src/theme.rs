@@ -9,9 +9,6 @@ pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(226, 232, 240);
 pub const TEXT_MUTED: Color32 = Color32::from_rgb(148, 163, 184);
 pub const BORDER_SUBTLE: Color32 = Color32::from_rgb(40, 46, 56);
 
-// Not wired into the window yet: the UI paints its own colours and switching the
-// global visuals on would restyle the whole app, so this stays a ready-made hook.
-#[allow(dead_code)]
 pub fn apply_theme(style: &mut Style) {
     style.spacing.window_margin = egui::Margin::same(12.0);
     style.spacing.button_padding = egui::vec2(6.0, 4.0);
@@ -23,4 +20,22 @@ pub fn apply_theme(style: &mut Style) {
         hyperlink_color: LEMON,
         ..Default::default()
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_applies_the_lemon_dark_palette() {
+        let mut style = Style::default();
+
+        apply_theme(&mut style);
+
+        assert!(style.visuals.dark_mode);
+        assert_eq!(style.visuals.panel_fill, BG_DARK);
+        assert_eq!(style.visuals.window_fill, BG_DARK);
+        assert_eq!(style.visuals.hyperlink_color, LEMON);
+        assert_eq!(style.spacing.button_padding, egui::vec2(6.0, 4.0));
+    }
 }

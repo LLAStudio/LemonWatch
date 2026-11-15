@@ -80,8 +80,8 @@ fn run_gui(workspace: Option<&str>) {
     let result = eframe::run_native(
         "LemonWatch",
         native_options,
-        Box::new(move |_cc| {
-            let app = app::LemonWatchApp::new(_cc);
+        Box::new(move |cc| {
+            let app = app::LemonWatchApp::new(cc);
             if let Some(ref root) = seed_path {
                 app.state.lock().unwrap().workspace = Some(root.clone());
                 let (tx, rx) = std::sync::mpsc::channel::<app::Project>();
