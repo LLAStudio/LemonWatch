@@ -92,11 +92,10 @@ pub fn purge_caches_background(
     thread::spawn(move || {
         let sizes: Vec<u64> = paths
             .iter()
-            .map(|p| {
-                fs::metadata(p)
-                    .ok()
-                    .map(|m| m.len())
-                    .unwrap_or_else(|| walk_dir_size(p))
+            .map(|p| match fs::metadata(p) {
+                // A directory's own length is just its entry size, so walk it.
+                Ok(meta) if meta.is_file() => meta.len(),
+                _ => walk_dir_size(p),
             })
             .collect();
         let results: Vec<DeleteResult> = paths
@@ -242,6 +241,35 @@ mod tests {
         assert!(
             reason.contains("Expected a directory"),
             "reason should mention the directory check, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn background_purge_reports_the_recursive_cache_size() {
+        let root = TempDir::new("size");
+        let project_dir = root.path().join("project");
+        let cache = project_dir.join("node_modules");
+        fs::create_dir_all(cache.join("pkg/dist")).unwrap();
+        fs::write(project_dir.join("package.json"), b"{}").unwrap();
+        fs::write(cache.join("pkg/index.js"), vec![b'a'; 1024]).unwrap();
+        fs::write(cache.join("pkg/dist/bundle.js"), vec![b'b'; 2048]).unwrap();
+        fs::write(cache.join("top.bin"), vec![b'c'; 5120]).unwrap();
+        let expected: u64 = 1024 + 2048 + 5120;
+
+        let (tx, rx) = mpsc::channel();
+        purge_caches_background(std::slice::from_ref(&cache), tx)
+            .join()
+            .expect("purge thread finished");
+        let results: Vec<DeleteResult> = rx.try_iter().collect();
+        let cache_result = results
+            .iter()
+            .find(|r| r.cache_name == "node_modules")
+            .expect("node_modules result");
+
+        assert!(cache_result.success, "expected purge: {:?}", cache_result.reason);
+        assert_eq!(
+            cache_result.size_bytes, expected,
+            "size must be the recursive total, not the directory entry size"
         );
     }
 
