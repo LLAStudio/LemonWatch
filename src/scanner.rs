@@ -85,6 +85,13 @@ pub fn scan_workspace(root: &Path) -> Result<Vec<Project>> {
         .min_depth(1)
         .max_depth(3)
         .into_iter()
+        // Never look for projects inside a cache: packages under node_modules
+        // or crates under target are not workspaces of their own. The walk root
+        // is exempt so a workspace named like a cache still gets scanned.
+        .filter_entry(|e| {
+            e.depth() == 0
+                || !(e.file_type().is_dir() && is_cache_dir_name(&e.file_name().to_string_lossy()))
+        })
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_dir())
         .filter(|e| PROJECT_MARKERS.iter().any(|m| e.path().join(m).exists()))
@@ -389,6 +396,65 @@ mod tests {
             "marker-less directories must not be reported, got {:?}",
             projects.iter().map(|p| p.name.as_str()).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn does_not_descend_into_cache_directories() {
+        let root = TempDir::new("prune");
+        let project_dir = root.path().join("webapp");
+        let vendored_package = project_dir.join("node_modules/somepkg");
+        fs::create_dir_all(&vendored_package).unwrap();
+        write_bytes(&project_dir.join("package.json"), 2);
+        write_bytes(&vendored_package.join("package.json"), 2);
+        write_bytes(&vendored_package.join("index.js"), 1024);
+
+        let projects = scan_workspace(root.path()).expect("scan workspace");
+        let names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
+
+        assert_eq!(
+            names,
+            vec!["webapp"],
+            "a package inside node_modules must not become a project"
+        );
+        let project = find(&projects, "webapp");
+        assert_eq!(cache_names(project), vec!["node_modules"]);
+        assert!(
+            project.total_cache_bytes >= 1024,
+            "pruning the walk must not stop the cache from being sized, got {}",
+            project.total_cache_bytes
+        );
+    }
+
+    #[test]
+    fn still_finds_nested_projects_outside_caches() {
+        let root = TempDir::new("nest");
+        let monorepo = root.path().join("monorepo");
+        let storefront = monorepo.join("apps/storefront");
+        fs::create_dir_all(&storefront).unwrap();
+        fs::create_dir_all(storefront.join("node_modules")).unwrap();
+        write_bytes(&monorepo.join("package.json"), 2);
+        write_bytes(&storefront.join("package.json"), 2);
+        write_bytes(&storefront.join("node_modules/dep.js"), 8);
+
+        let projects = scan_workspace(root.path()).expect("scan workspace");
+        let mut names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
+        names.sort_unstable();
+
+        assert_eq!(names, vec!["monorepo", "storefront"]);
+    }
+
+    #[test]
+    fn scans_a_workspace_root_named_like_a_cache() {
+        let base = TempDir::new("rootname");
+        let root = base.path().join("target");
+        let project_dir = root.join("app");
+        fs::create_dir_all(&project_dir).unwrap();
+        write_bytes(&project_dir.join("package.json"), 2);
+
+        let projects = scan_workspace(&root).expect("scan workspace");
+
+        assert_eq!(projects.len(), 1, "the walk root itself must never be pruned");
+        assert_eq!(projects[0].name, "app");
     }
 
     #[test]
