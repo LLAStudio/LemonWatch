@@ -576,22 +576,21 @@ fn render_modal(ctx: &Context, state: &mut AppState) {
             }
             ui.add_space(12.0);
             ui.horizontal(|ui| {
-                if ui.button("Cancel").clicked() {
+                let cancel = ui.button("Cancel");
+                // Focus the safe action when the prompt opens: Enter and Space then
+                // dismiss, and can never confirm a deletion by accident.
+                if std::mem::take(&mut state.purge_focus_pending) {
+                    cancel.request_focus();
+                }
+                if cancel.clicked() {
                     cancel_purge_prompt(state);
                     return;
                 }
                 ui.add_space(8.0);
-                let confirm = ui.button(
-                    egui::RichText::new("Confirm Purge")
-                        .strong()
-                        .color(theme::TEXT_PRIMARY),
-                );
-                // Focus the destructive action when the prompt opens, so Enter or
-                // Space cannot reach the toolbar button that opened it.
-                if std::mem::take(&mut state.purge_focus_pending) {
-                    confirm.request_focus();
-                }
-                if confirm.clicked() {
+                if ui
+                    .button(egui::RichText::new("Confirm Purge").strong().color(theme::TEXT_PRIMARY))
+                    .clicked()
+                {
                     let list = state.pending_purge.take().unwrap();
                     let paths: Vec<PathBuf> = list.iter().map(|(_, p, _)| p.clone()).collect();
                     let total_bytes: u64 = list.iter().map(|(_, _, s)| *s).sum();
@@ -760,8 +759,7 @@ mod tests {
         );
     }
 
-    fn run_frame(state: &mut AppState, events: Vec<egui::Event>) {
-        let ctx = Context::default();
+    fn run_frame_with(ctx: &Context, state: &mut AppState, events: Vec<egui::Event>) {
         let input = egui::RawInput {
             events,
             ..Default::default()
@@ -769,10 +767,14 @@ mod tests {
         let _ = ctx.run(input, |ctx| render_modal(ctx, state));
     }
 
-    fn escape_press() -> egui::Event {
+    fn run_frame(state: &mut AppState, events: Vec<egui::Event>) {
+        run_frame_with(&Context::default(), state, events);
+    }
+
+    fn key_press(key: egui::Key) -> egui::Event {
         egui::Event::Key {
-            key: egui::Key::Escape,
-            physical_key: Some(egui::Key::Escape),
+            key,
+            physical_key: Some(key),
             pressed: true,
             repeat: false,
             modifiers: egui::Modifiers::NONE,
@@ -785,7 +787,7 @@ mod tests {
         open_purge_modal(&mut state);
         assert!(state.pending_purge.is_some());
 
-        run_frame(&mut state, vec![escape_press()]);
+        run_frame(&mut state, vec![key_press(egui::Key::Escape)]);
 
         assert!(
             state.pending_purge.is_none(),
@@ -800,7 +802,7 @@ mod tests {
         open_purge_modal(&mut state);
         state.search_has_focus = true;
 
-        run_frame(&mut state, vec![escape_press()]);
+        run_frame(&mut state, vec![key_press(egui::Key::Escape)]);
 
         assert!(
             state.pending_purge.is_some(),
@@ -809,19 +811,37 @@ mod tests {
     }
 
     #[test]
-    fn escape_works_while_confirm_holds_focus() {
+    fn escape_works_while_a_dialog_button_holds_focus() {
         let mut state = state_with_one_selected_project();
         open_purge_modal(&mut state);
-        // The dialog focuses Confirm on its first frame; that must not shadow
+        // The dialog focuses Cancel on its first frame; that must not shadow
         // Escape, because only the search box may claim the key.
         state.search_has_focus = false;
 
-        run_frame(&mut state, vec![escape_press()]);
+        run_frame(&mut state, vec![key_press(egui::Key::Escape)]);
 
         assert!(
             state.pending_purge.is_none(),
             "a focused button must not block Escape"
         );
+    }
+
+    #[test]
+    fn enter_dismisses_the_prompt_without_deleting() {
+        let mut state = state_with_one_selected_project();
+        open_purge_modal(&mut state);
+
+        // Focus only survives across passes inside one context, so share it.
+        let ctx = Context::default();
+        run_frame_with(&ctx, &mut state, Vec::new()); // Cancel takes focus here
+        run_frame_with(&ctx, &mut state, vec![key_press(egui::Key::Enter)]);
+
+        assert!(
+            state.pending_purge.is_none(),
+            "Enter on the focused Cancel should dismiss the prompt"
+        );
+        assert!(!state.purge_active, "Enter must never start a deletion");
+        assert_eq!(state.purge_total, 0);
     }
 
     #[test]
