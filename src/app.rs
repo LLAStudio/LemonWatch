@@ -505,11 +505,9 @@ fn open_purge_modal(state: &mut AppState) {
     if list.is_empty() {
         return;
     }
-    state.purge_total = list.len();
+    // Only the confirmation is armed here: the progress window must not appear
+    // until the user actually confirms the deletion.
     state.purge_total_gb = total as f64 / 1_073_741_824.0;
-    state.purge_active = true;
-    state.purge_done = 0;
-    state.purge_error = None;
     state.pending_purge = Some(list);
 }
 
@@ -519,7 +517,7 @@ fn render_modal(ctx: &Context, state: &mut AppState) {
     }
     let total: f64 = state.pending_purge.as_ref().unwrap().iter().map(|(_, _, s)| *s).sum::<u64>() as f64 / 1_073_741_824.0;
     let list_len = state.pending_purge.as_ref().unwrap().len();
-    egui::Window::new("purge-confirm")
+    egui::Window::new("Confirm Purge")
         .min_width(360.0)
         .show(ctx, |ui| {
             ui.heading("Confirm Cache Purge");
@@ -671,5 +669,46 @@ fn format_gb(gb: f64) -> String {
         format!("{:.2} MB", gb * 1024.0)
     } else {
         format!("{:.2} GB", gb)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scanner::DetectedCache;
+
+    fn state_with_one_selected_project() -> AppState {
+        let mut state = AppState::default();
+        state.projects.push(Project {
+            name: "app".into(),
+            path: PathBuf::from("app"),
+            ecosystem: Ecosystem::Node,
+            caches: vec![DetectedCache {
+                name: "node_modules".into(),
+                path: PathBuf::from("app/node_modules"),
+                size_bytes: 2048,
+            }],
+            total_cache_bytes: 2048,
+            last_active_secs: 0,
+            last_active_label: "now".into(),
+            source_size_bytes: 0,
+        });
+        *state.selected.lock().unwrap() = vec![0];
+        state
+    }
+
+    #[test]
+    fn arming_the_purge_dialog_does_not_start_the_purge() {
+        let mut state = state_with_one_selected_project();
+
+        open_purge_modal(&mut state);
+
+        assert!(state.pending_purge.is_some(), "the dialog should be armed");
+        assert!(
+            !state.purge_active,
+            "the progress window must wait for confirmation"
+        );
+        assert_eq!(state.purge_total, 0);
+        assert!(state.purge_total_gb > 0.0);
     }
 }
