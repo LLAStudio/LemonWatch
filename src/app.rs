@@ -511,6 +511,14 @@ fn open_purge_modal(state: &mut AppState) {
     state.pending_purge = Some(list);
 }
 
+fn cancel_purge_prompt(state: &mut AppState) {
+    state.pending_purge = None;
+    state.purge_active = false;
+    if let Some(h) = state.purge_handle.take() {
+        let _ = h.join();
+    }
+}
+
 fn render_modal(ctx: &Context, state: &mut AppState) {
     if state.pending_purge.is_none() {
         return;
@@ -558,11 +566,7 @@ fn render_modal(ctx: &Context, state: &mut AppState) {
             ui.add_space(12.0);
             ui.horizontal(|ui| {
                 if ui.button("Cancel").clicked() {
-                    state.pending_purge = None;
-                    state.purge_active = false;
-                    if let Some(h) = state.purge_handle.take() {
-                        let _ = h.join();
-                    }
+                    cancel_purge_prompt(state);
                     return;
                 }
                 ui.add_space(8.0);
@@ -584,7 +588,12 @@ fn render_modal(ctx: &Context, state: &mut AppState) {
                 }
             });
         });
-        if state.purge_active && state.purge_total > 0 {
+    // Escape dismisses the prompt exactly like Cancel does. The scrim stays inert:
+    // a stray click must not throw away a destructive confirmation.
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        cancel_purge_prompt(state);
+    }
+    if state.purge_active && state.purge_total > 0 {
             let progress = state.purge_done as f32 / state.purge_total as f32;
             egui::Window::new("purge-progress").show(ctx, |ui| {
                 ui.heading("Purging Caches...");
@@ -726,5 +735,52 @@ mod tests {
         );
         assert_eq!(state.purge_total, 0);
         assert!(state.purge_total_gb > 0.0);
+    }
+
+    fn run_frame(state: &mut AppState, events: Vec<egui::Event>) {
+        let ctx = Context::default();
+        let input = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        let _ = ctx.run(input, |ctx| render_modal(ctx, state));
+    }
+
+    fn escape_press() -> egui::Event {
+        egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: Some(egui::Key::Escape),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn escape_dismisses_the_purge_dialog() {
+        let mut state = state_with_one_selected_project();
+        open_purge_modal(&mut state);
+        assert!(state.pending_purge.is_some());
+
+        run_frame(&mut state, vec![escape_press()]);
+
+        assert!(
+            state.pending_purge.is_none(),
+            "Escape should dismiss the confirmation"
+        );
+        assert!(!state.purge_active, "dismissing must not start a purge");
+    }
+
+    #[test]
+    fn a_frame_without_escape_keeps_the_purge_dialog() {
+        let mut state = state_with_one_selected_project();
+        open_purge_modal(&mut state);
+
+        run_frame(&mut state, Vec::new());
+
+        assert!(
+            state.pending_purge.is_some(),
+            "the dialog must stay until the user dismisses it"
+        );
     }
 }
