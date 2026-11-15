@@ -217,15 +217,25 @@ jobs:
             ls -la "/c/Program Files (x86)/NSIS" 2>&1 || true
             exit 1
           fi
-          echo "Using $MAKENSIS"
+          {
+            echo "Using: $MAKENSIS"
+            "$MAKENSIS" -VERSION 2>&1 | head -2 || true
+          } > nsis-build.log
 
           set +e
-          "$MAKENSIS" -V3 inst.nsi > nsis-build.log 2>&1
+          "$MAKENSIS" -V3 inst.nsi >> nsis-build.log 2>&1
           NSIS_STATUS=$?
           set -e
           cat nsis-build.log
           if [ "$NSIS_STATUS" -ne 0 ]; then
-            echo "::error::makensis failed: $(tr '\n' ' ' < nsis-build.log | tail -c 400)"
+            i=0
+            while IFS= read -r line; do
+              [ -z "$line" ] && continue
+              echo "::error::nsis line $i: $line"
+              i=$((i + 1))
+              if [ "$i" -ge 8 ]; then break; fi
+            done < nsis-build.log
+            echo "::error::makensis exited with $NSIS_STATUS"
             exit "$NSIS_STATUS"
           fi
           ls -la release
