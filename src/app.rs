@@ -588,9 +588,10 @@ fn render_modal(ctx: &Context, state: &mut AppState) {
                 }
             });
         });
-    // Escape dismisses the prompt exactly like Cancel does. The scrim stays inert:
-    // a stray click must not throw away a destructive confirmation.
-    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    // Escape dismisses the prompt exactly like Cancel does, unless a text field
+    // is asking for keyboard input: then Escape belongs to that field. The scrim
+    // stays inert, so a stray click cannot throw away a destructive confirmation.
+    if !ctx.wants_keyboard_input() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         cancel_purge_prompt(state);
     }
     if state.purge_active && state.purge_total > 0 {
@@ -769,6 +770,40 @@ mod tests {
             "Escape should dismiss the confirmation"
         );
         assert!(!state.purge_active, "dismissing must not start a purge");
+    }
+
+    #[test]
+    fn escape_is_left_to_a_focused_text_field() {
+        let mut state = state_with_one_selected_project();
+        open_purge_modal(&mut state);
+
+        let ctx = Context::default();
+        let mut text = String::new();
+        let mut draw_search = |ctx: &Context| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.text_edit_singleline(&mut text).request_focus();
+            });
+        };
+        // First pass grants focus; the second carries the Escape press.
+        let _ = ctx.run(egui::RawInput::default(), |ctx| draw_search(ctx));
+        let mut wants_keyboard = false;
+        let _ = ctx.run(
+            egui::RawInput {
+                events: vec![escape_press()],
+                ..Default::default()
+            },
+            |ctx| {
+                draw_search(ctx);
+                wants_keyboard = ctx.wants_keyboard_input();
+                render_modal(ctx, &mut state);
+            },
+        );
+
+        assert!(wants_keyboard, "the text field should own keyboard input");
+        assert!(
+            state.pending_purge.is_some(),
+            "Escape must not steal the key from a focused text field"
+        );
     }
 
     #[test]
