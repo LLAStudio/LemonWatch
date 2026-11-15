@@ -10,6 +10,12 @@
 
 ![LemonWatch screenshot](assets/screenshot.png)
 
+*Workspace overview: reclaimable totals, dormant projects and every detected cache.*
+
+![Purge confirmation dialog](assets/screenshot-purge.png)
+
+*Purge confirmation: the exact cache folders and total size are listed before anything is deleted.*
+
 - **Header:** Workspace path + Change Folder / Rescan buttons.
 - **KPI cards:** Total Reclaimable (Lemon Yellow), Dormant Projects >30d (Coral), Space Freed This Session (Lime).
 - **Filter bar:** Live search, ecosystem pills (All / Node / Rust / Python / Other), sort dropdown, Select Dormant / Select All / Clear Selection, Purge Selected.

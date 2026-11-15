@@ -141,7 +141,7 @@ jobs:
         run: |
           set -euo pipefail
           xvfb-run --auto-servernum \
-            --server-args="-screen 0 1280x800x24 +extension GLX +render -noreset" \
+            --server-args="-screen 0 1280x800x24 +extension GLX +extension XTEST +render -noreset" \
             bash -c '
               set -euo pipefail
               ./target/debug/lemon-watch "$LEMON_WORKSPACE" &
@@ -149,18 +149,39 @@ jobs:
               win=$(timeout 60 xdotool search --sync --name LemonWatch | head -1)
               sleep 8  # let the background scan finish so the list is populated
               import -window "$win" assets/screenshot.png
+              # Drive the UI with real X input. Coordinates assume the default
+              # 1100x720 window: "Select Dormant (>30d)" then "Purge Selected"
+              # in the toolbar row.
+              xdotool windowfocus "$win"
+              xdotool mousemove --window "$win" 75 172 click 1
+              sleep 2
+              xdotool mousemove --window "$win" 1000 172 click 1
+              sleep 2
+              import -window "$win" assets/screenshot-purge.png
               kill "$app" || true
             '
-          file assets/screenshot.png
-          # A blank capture still succeeds, so fail if the image is almost flat.
-          colours=$(identify -format '%k' assets/screenshot.png)
-          echo "unique colours: $colours"
-          test "$colours" -gt 50
+          # A blank capture still succeeds, so fail if either image is almost flat.
+          for shot in assets/screenshot.png assets/screenshot-purge.png; do
+            file "$shot"
+            colours=$(identify -format '%k' "$shot")
+            echo "$shot unique colours: $colours"
+            test "$colours" -gt 50
+          done
+          # A missed click leaves the second capture showing the list, so require
+          # a dialog-sized change: the overlay repaints ~35k pixels, while the
+          # selection state alone changes ~5k.
+          changed=$(convert assets/screenshot.png assets/screenshot-purge.png \
+            -compose difference -composite -colorspace Gray -threshold 10% \
+            -format "%[fx:mean*w*h]" info:)
+          echo "changed pixels: $changed"
+          awk -v n="$changed" 'BEGIN { exit !(n > 12000) }'
 
       - uses: actions/upload-artifact@v4
         with:
-          name: lemon-watch-screenshot
-          path: assets/screenshot.png
+          name: lemon-watch-screenshots
+          path: |
+            assets/screenshot.png
+            assets/screenshot-purge.png
           if-no-files-found: error
           retention-days: 14
 
