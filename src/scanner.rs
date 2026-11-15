@@ -223,3 +223,202 @@ fn format_human_age(last_active_secs: u64) -> String {
         format!("{}y ago", ago / (86400 * 365))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let nanos = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "lemonwatch-scan-{}-{}-{}",
+                tag,
+                std::process::id(),
+                nanos
+            ));
+            fs::create_dir_all(&path).expect("create temp workspace");
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn write_bytes(path: &Path, len: usize) {
+        fs::write(path, vec![b'x'; len]).expect("write fixture file");
+    }
+
+    fn find<'a>(projects: &'a [Project], name: &str) -> &'a Project {
+        projects.iter().find(|p| p.name == name).unwrap_or_else(|| {
+            panic!(
+                "project '{name}' not found; found {:?}",
+                projects.iter().map(|p| p.name.as_str()).collect::<Vec<_>>()
+            )
+        })
+    }
+
+    fn cache_names(project: &Project) -> Vec<&str> {
+        project.caches.iter().map(|c| c.name.as_str()).collect()
+    }
+
+    fn sample_project(last_active_secs: u64) -> Project {
+        Project {
+            name: "sample".into(),
+            path: PathBuf::from("sample"),
+            ecosystem: Ecosystem::Other,
+            caches: Vec::new(),
+            total_cache_bytes: 0,
+            last_active_secs,
+            last_active_label: String::new(),
+            source_size_bytes: 0,
+        }
+    }
+
+    fn now_secs() -> u64 {
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    }
+
+    #[test]
+    fn detects_node_project_and_its_caches() {
+        let root = TempDir::new("node");
+        let project_dir = root.path().join("webapp");
+        fs::create_dir_all(project_dir.join("node_modules/left-pad")).unwrap();
+        fs::create_dir_all(project_dir.join(".next")).unwrap();
+        write_bytes(&project_dir.join("package.json"), 10);
+        write_bytes(&project_dir.join("index.js"), 16);
+        write_bytes(&project_dir.join("node_modules/left-pad/index.js"), 2048);
+        write_bytes(&project_dir.join(".next/cache.bin"), 1024);
+
+        let projects = scan_workspace(root.path()).expect("scan workspace");
+        let project = find(&projects, "webapp");
+
+        assert_eq!(project.ecosystem, Ecosystem::Node);
+        let mut names = cache_names(project);
+        names.sort_unstable();
+        assert_eq!(names, vec![".next", "node_modules"]);
+        assert!(
+            project.total_cache_bytes >= 3072,
+            "expected both caches to be sized, got {}",
+            project.total_cache_bytes
+        );
+        assert_eq!(
+            project.total_cache_bytes,
+            project.caches.iter().map(|c| c.size_bytes).sum::<u64>(),
+            "total must equal the sum of cache sizes"
+        );
+        assert!(
+            project.source_size_bytes >= 26,
+            "source bytes must exclude caches, got {}",
+            project.source_size_bytes
+        );
+    }
+
+    #[test]
+    fn detects_rust_project_and_target_cache() {
+        let root = TempDir::new("rust");
+        let project_dir = root.path().join("core");
+        fs::create_dir_all(project_dir.join("target/debug")).unwrap();
+        fs::create_dir_all(project_dir.join("src")).unwrap();
+        write_bytes(&project_dir.join("Cargo.toml"), 42);
+        write_bytes(&project_dir.join("src/main.rs"), 8);
+        write_bytes(&project_dir.join("target/debug/app"), 4096);
+
+        let projects = scan_workspace(root.path()).expect("scan workspace");
+        let project = find(&projects, "core");
+
+        assert_eq!(project.ecosystem, Ecosystem::Rust);
+        assert_eq!(cache_names(project), vec!["target"]);
+        assert!(project.total_cache_bytes >= 4096);
+        assert_eq!(project.source_size_bytes, 50);
+    }
+
+    #[test]
+    fn detects_python_project_with_several_caches() {
+        let root = TempDir::new("python");
+        let project_dir = root.path().join("api");
+        fs::create_dir_all(project_dir.join(".venv/lib")).unwrap();
+        fs::create_dir_all(project_dir.join("__pycache__")).unwrap();
+        write_bytes(&project_dir.join("pyproject.toml"), 12);
+        write_bytes(&project_dir.join("app.py"), 20);
+        write_bytes(&project_dir.join(".venv/lib/site.py"), 512);
+        write_bytes(&project_dir.join("__pycache__/app.pyc"), 64);
+
+        let projects = scan_workspace(root.path()).expect("scan workspace");
+        let project = find(&projects, "api");
+
+        assert_eq!(project.ecosystem, Ecosystem::Python);
+        let mut names = cache_names(project);
+        names.sort_unstable();
+        assert_eq!(names, vec![".venv", "__pycache__"]);
+    }
+
+    #[test]
+    fn ignores_directories_without_project_markers() {
+        let root = TempDir::new("bare");
+        let nested = root.path().join("scratch");
+        fs::create_dir_all(nested.join("node_modules/pkg")).unwrap();
+        write_bytes(&nested.join("node_modules/pkg/index.js"), 32);
+        write_bytes(&nested.join("notes.txt"), 4);
+
+        let projects = scan_workspace(root.path()).expect("scan workspace");
+        assert!(
+            projects.is_empty(),
+            "marker-less directories must not be reported, got {:?}",
+            projects.iter().map(|p| p.name.as_str()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ignores_projects_deeper_than_the_walk_limit() {
+        let root = TempDir::new("deep");
+        let shallow = root.path().join("shallow");
+        let deep = root.path().join("a/b/c/d");
+        fs::create_dir_all(&shallow).unwrap();
+        fs::create_dir_all(&deep).unwrap();
+        write_bytes(&shallow.join("package.json"), 2);
+        write_bytes(&deep.join("package.json"), 2);
+
+        let projects = scan_workspace(root.path()).expect("scan workspace");
+        let names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"shallow"), "shallow project missed: {names:?}");
+        assert!(!names.contains(&"d"), "project beyond max_depth must be skipped: {names:?}");
+    }
+
+    #[test]
+    fn dormancy_is_decided_by_last_active_timestamp() {
+        let now = now_secs();
+        let stale = sample_project(now.saturating_sub(31 * 86_400));
+        let fresh = sample_project(now.saturating_sub(86_400));
+
+        assert!(stale.is_dormant(30), "31 days idle must be dormant");
+        assert!(!fresh.is_dormant(30), "1 day idle must not be dormant");
+        assert!(!stale.is_dormant(60), "31 days idle is not dormant at 60 days");
+    }
+
+    #[test]
+    fn human_age_labels_cover_each_bucket() {
+        let now = now_secs();
+        assert!(format_human_age(now).ends_with("s ago"));
+        assert!(format_human_age(now.saturating_sub(120)).ends_with("m ago"));
+        assert!(format_human_age(now.saturating_sub(2 * 3600)).ends_with("h ago"));
+        assert!(format_human_age(now.saturating_sub(3 * 86_400)).ends_with("d ago"));
+        assert!(format_human_age(now.saturating_sub(60 * 86_400)).ends_with("mo ago"));
+    }
+}
