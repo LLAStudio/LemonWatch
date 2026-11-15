@@ -515,11 +515,24 @@ fn render_modal(ctx: &Context, state: &mut AppState) {
     if state.pending_purge.is_none() {
         return;
     }
+    // Dim the workspace behind the dialog and swallow its input, so this reads as
+    // a modal rather than another window floating over a live list.
+    let screen = ctx.screen_rect();
+    egui::Area::new(egui::Id::new("purge-scrim"))
+        .order(egui::Order::Middle)
+        .fixed_pos(screen.min)
+        .show(ctx, |ui| {
+            let (rect, _) = ui.allocate_exact_size(screen.size(), egui::Sense::click_and_drag());
+            ui.painter()
+                .rect_filled(rect, 0.0, Color32::from_black_alpha(150));
+        });
     let total: f64 = state.pending_purge.as_ref().unwrap().iter().map(|(_, _, s)| *s).sum::<u64>() as f64 / 1_073_741_824.0;
     let list_len = state.pending_purge.as_ref().unwrap().len();
     egui::Window::new("Confirm Purge")
         // A destructive confirmation should land in the middle of the window
         // rather than on top of the header the user just interacted with.
+        // Foreground keeps it above the scrim drawn in the Middle order.
+        .order(egui::Order::Foreground)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .min_width(360.0)
         .show(ctx, |ui| {
